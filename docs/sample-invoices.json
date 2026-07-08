@@ -1,0 +1,16 @@
+[
+  {
+    "TrackingId": "SAMPLE-001",
+    "Vendor": "ACME Corp",
+    "TotalAmount": 750.50,
+    "Category": "IT",
+    "Description": "Monthly cloud services"
+  },
+  {
+    "TrackingId": "SAMPLE-002",
+    "Vendor": "Office Supplies Ltd",
+    "TotalAmount": 120.00,
+    "Category": "Admin",
+    "Description": "Printer cartridges"
+  }
+]

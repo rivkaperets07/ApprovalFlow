@@ -1,0 +1,1 @@
+builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);

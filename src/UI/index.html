@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZioNet - Invoice Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; background-color: #f4f7f6; }
+        .card { max-width: 600px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        label { display: block; margin-top: 10px; font-weight: 600; }
+        input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { margin-top: 15px; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
+        .btn-submit { background: #0066cc; }
+        .btn-approve { background: #28a745; }
+        .btn-reject { background: #dc3545; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Submit New Invoice</h2>
+        <label>Gateway URL</label>
+        <input id="gatewayUrl" value="http://localhost:5000" />
+
+        <form id="invoiceForm">
+            <label>Vendor</label>
+            <input id="vendor" placeholder="e.g., ACME Corp" required />
+            <label>Total Amount</label>
+            <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
+            <label>Category</label>
+            <input id="category" placeholder="e.g., Operations" />
+            <label>Notes</label>
+            <textarea id="description" rows="2"></textarea>
+            <button type="submit" class="btn-submit">Submit Invoice</button>
+        </form>
+        <h3>Result</h3>
+        <pre id="result">—</pre>
+    </div>
+
+    <div class="card">
+        <h2>Manual Approval</h2>
+        <label>Tracking ID</label>
+        <input id="manualTrackingId" placeholder="INV-..." />
+        <div>
+            <button id="approveBtn" class="btn-approve">Approve</button>
+            <button id="rejectBtn" class="btn-reject">Reject</button>
+        </div>
+        <h3>Action Result</h3>
+        <pre id="manualResult">—</pre>
+    </div>
+
+    <script>
+        // Helper function to handle all API calls
+        async function sendRequest(endpoint, method = 'POST', body = null) {
+            const gateway = document.getElementById('gatewayUrl').value.replace(/\/$/, '');
+            try {
+                const response = await fetch(`${gateway}/${endpoint}`, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : null
+                });
+                const text = await response.text();
+                return `HTTP ${response.status}\n${text}`;
+            } catch (err) {
+                return 'Error: ' + err.message;
+            }
+        }
+
+        document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                Vendor: document.getElementById('vendor').value,
+                TotalAmount: parseFloat(document.getElementById('totalAmount').value),
+                Category: document.getElementById('category').value,
+                Notes: document.getElementById('description').value
+            };
+            document.getElementById('result').textContent = 'Processing...';
+            document.getElementById('result').textContent = await sendRequest('submit', 'POST', payload);
+        });
+
+        document.getElementById('approveBtn').addEventListener('click', async () => {
+            const id = document.getElementById('manualTrackingId').value.trim();
+            document.getElementById('manualResult').textContent = await sendRequest(`approve/${id}`);
+        });
+
+        document.getElementById('rejectBtn').addEventListener('click', async () => {
+            const id = document.getElementById('manualTrackingId').value.trim();
+            document.getElementById('manualResult').textContent = await sendRequest(`reject/${id}`);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "ExpensePolicies": {
+    "Meals": {
+      "RequiredMetadata": ["MealAttendeesCount"],
+      "MaxAmount": 150
+    },
+    "Travel": {
+      "RequiredMetadata": ["TripId"],
+      "MaxAmount": 3000
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# .NET build output
+bin/
+obj/
+out/
+*.user
+*.suo
+
+# Python venv (unused leftover, kept out of the repo)
+.venv/
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+
+# Environment / secrets
+.env
+*.local.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log

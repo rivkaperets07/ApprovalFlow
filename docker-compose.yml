@@ -1,0 +1,101 @@
+﻿services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - approval-flow-network
+
+  placement:
+    image: "daprio/dapr:1.13.0"
+    command: ["./placement", "-port", "50006"]
+    ports:
+      - "50006:50006"
+    networks:
+      - approval-flow-network
+
+  gateway:
+    build:
+      context: ./src/GatewayService
+      dockerfile: Dockerfile
+    environment:
+      - DAPR_HTTP_ENDPOINT=http://localhost:3500
+    ports:
+      - "5000:8080"
+    depends_on:
+      - redis
+    volumes:
+      - ./components:/components
+    networks:
+      - approval-flow-network
+
+  decision-engine:
+    build:
+      context: ./src/DecisionEngine
+      dockerfile: Dockerfile
+    environment:
+      - DAPR_HTTP_ENDPOINT=http://localhost:3500
+    depends_on:
+      - redis
+    volumes:
+      - ./components:/components
+    networks:
+      - approval-flow-network
+
+  payment-service:
+    build:
+      context: ./src/PaymentService
+      dockerfile: Dockerfile
+    environment:
+      - DAPR_HTTP_ENDPOINT=http://localhost:3500
+    depends_on:
+      - redis
+    volumes:
+      - ./components:/components
+    networks:
+      - approval-flow-network
+
+  gateway-sidecar:
+    image: daprio/daprd:1.13.0
+    network_mode: service:gateway
+    command: ["/daprd","--app-id","gateway","--app-port","8080","--dapr-http-port","3500","--resources-path","/components"]
+    depends_on:
+      - gateway
+      - redis
+    volumes:
+      - ./components:/components
+
+  decision-engine-sidecar:
+    image: daprio/daprd:1.13.0
+    network_mode: service:decision-engine
+    command: ["/daprd","--app-id","decision-engine","--app-port","8080","--dapr-http-port","3500","--resources-path","/components"]
+    depends_on:
+      - decision-engine
+      - redis
+    volumes:
+      - ./components:/components
+
+  payment-service-sidecar:
+    image: daprio/daprd:1.13.0
+    network_mode: service:payment-service
+    command: ["/daprd","--app-id","payment-service","--app-port","8080","--dapr-http-port","3500","--resources-path","/components"]
+    depends_on:
+      - payment-service
+      - redis
+    volumes:
+      - ./components:/components
+
+  ui:
+    build:
+      context: ./src/UI
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - gateway
+    networks:
+      - approval-flow-network
+
+networks:
+  approval-flow-network:
+    name: approval-flow-network
