@@ -6,7 +6,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Threading.Tasks;
+
+// See DecisionEngine.cs for why this is pinned explicitly.
+var currencyCulture = CultureInfo.GetCultureInfo("en-US");
+CultureInfo.DefaultThreadCurrentCulture = currencyCulture;
+CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 

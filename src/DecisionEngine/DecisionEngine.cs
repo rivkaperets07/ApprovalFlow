@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dapr;
 using Dapr.Client;
 using DecisionEngine.Ai;
@@ -9,6 +10,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+// The container's default culture has no currency symbol (renders "$" as "¤"), which
+// would otherwise leak into every escalation/approval Reason string. Pin it explicitly
+// rather than relying on the host's locale.
+var currencyCulture = CultureInfo.GetCultureInfo("en-US");
+CultureInfo.DefaultThreadCurrentCulture = currencyCulture;
+CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);

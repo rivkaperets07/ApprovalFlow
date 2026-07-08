@@ -11,3 +11,9 @@ spec:
     value: "redis:6379"
   - name: redisPassword
     value: ""
+  # Dapr's default key prefix is the calling app-id, which would silently isolate
+  # Gateway/DecisionEngine/PaymentService's state from each other even though they
+  # share this Redis and the "invoice-{trackingId}" key convention. This system
+  # deliberately shares invoice records across services, so prefixing must be off.
+  - name: keyPrefix
+    value: "none"
