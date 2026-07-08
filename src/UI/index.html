@@ -6,14 +6,32 @@
     <title>ZioNet - Invoice Dashboard</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; background-color: #f4f7f6; }
-        .card { max-width: 600px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .card { max-width: 640px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         label { display: block; margin-top: 10px; font-weight: 600; }
         input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
         button { margin-top: 15px; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
         .btn-submit { background: #0066cc; }
         .btn-approve { background: #28a745; }
         .btn-reject { background: #dc3545; }
-        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
+        .btn-secondary { background: #6c757d; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; }
+        .status-card { margin-top: 15px; padding: 14px 16px; border-radius: 6px; border: 1px solid #ddd; }
+        .status-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.95em; }
+        .status-row span:first-child { color: #666; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 700; color: white; }
+        .badge-Pending { background: #6c757d; }
+        .badge-Approved { background: #28a745; }
+        .badge-Escalated { background: #d39e00; }
+        .badge-Rejected { background: #dc3545; }
+        .badge-Paid { background: #28a745; }
+        .badge-Failed { background: #dc3545; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9em; }
+        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+        .empty { color: #888; font-style: italic; }
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
+        .stat-box { background: #f4f7f6; border-radius: 6px; padding: 10px 12px; }
+        .stat-box .n { font-size: 1.4em; font-weight: 700; }
+        .stat-box .l { font-size: 0.8em; color: #666; }
     </style>
 </head>
 <body>
@@ -29,13 +47,28 @@
             <label>Total Amount</label>
             <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
             <label>Category</label>
-            <input id="category" placeholder="e.g., Operations" />
+            <input id="category" placeholder="e.g., SaaS, Meals, Travel..." />
             <label>Notes</label>
             <textarea id="description" rows="2"></textarea>
             <button type="submit" class="btn-submit">Submit Invoice</button>
         </form>
-        <h3>Result</h3>
-        <pre id="result">—</pre>
+        <div id="submitStatus" class="status-card" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+        <h2>Check Status</h2>
+        <p style="color:#666; font-size:0.9em; margin-top:0;">See whether an invoice was auto-approved, escalated for human review, rejected, and what happened to its payment.</p>
+        <label>Tracking ID</label>
+        <input id="checkTrackingId" placeholder="INV-..." />
+        <button id="checkStatusBtn" class="btn-secondary">Check Status</button>
+        <div id="checkStatusResult" class="status-card" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+        <h2>Escalation Queue</h2>
+        <p style="color:#666; font-size:0.9em; margin-top:0;">Only items the router could not safely approve on its own.</p>
+        <button id="refreshEscalationsBtn" class="btn-secondary">Refresh</button>
+        <div id="escalationsList"></div>
     </div>
 
     <div class="card">
@@ -50,23 +83,46 @@
         <pre id="manualResult">—</pre>
     </div>
 
+    <div class="card">
+        <h2>Dashboard</h2>
+        <button id="refreshStatsBtn" class="btn-secondary">Refresh</button>
+        <div id="statsPanel" class="stats-grid"></div>
+    </div>
+
     <script>
-        // Helper function to handle all API calls
-        async function sendRequest(endpoint, method = 'POST', body = null) {
-            const gateway = document.getElementById('gatewayUrl').value.replace(/\/$/, '');
-            try {
-                const response = await fetch(`${gateway}/${endpoint}`, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: body ? JSON.stringify(body) : null
-                });
-                const text = await response.text();
-                return `HTTP ${response.status}\n${text}`;
-            } catch (err) {
-                return 'Error: ' + err.message;
-            }
+        function gatewayBase() {
+            return document.getElementById('gatewayUrl').value.replace(/\/$/, '');
         }
 
+        async function callApi(endpoint, method = 'GET', body = null) {
+            const response = await fetch(`${gatewayBase()}/${endpoint}`, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : null
+            });
+            const data = await response.json().catch(() => null);
+            return { ok: response.ok, status: response.status, data };
+        }
+
+        function badge(value) {
+            if (!value) return '<span class="empty">—</span>';
+            return `<span class="badge badge-${value}">${value}</span>`;
+        }
+
+        function renderStatusCard(container, invoice) {
+            container.style.display = 'block';
+            container.innerHTML = `
+                <div class="status-row"><span>Tracking ID</span><span>${invoice.trackingId ?? ''}</span></div>
+                <div class="status-row"><span>Decision</span>${badge(invoice.status)}</div>
+                <div class="status-row"><span>Decided by</span><span>${invoice.decidedBy ?? '—'}</span></div>
+                <div class="status-row"><span>Reason</span><span>${invoice.reason ?? '—'}</span></div>
+                <div class="status-row"><span>Vendor / Category / Amount</span><span>${invoice.vendor ?? ''} / ${invoice.category ?? ''} / ${invoice.totalAmount ?? ''}</span></div>
+                <div class="status-row"><span>Payment</span>${badge(invoice.paymentStatus)}</div>
+                ${invoice.paymentMessage ? `<div class="status-row"><span>Payment detail</span><span>${invoice.paymentMessage}</span></div>` : ''}
+            `;
+        }
+
+        // --- Submit + auto-poll ---------------------------------------------
         document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const payload = {
@@ -75,19 +131,115 @@
                 Category: document.getElementById('category').value,
                 Notes: document.getElementById('description').value
             };
-            document.getElementById('result').textContent = 'Processing...';
-            document.getElementById('result').textContent = await sendRequest('submit', 'POST', payload);
+            const statusBox = document.getElementById('submitStatus');
+            statusBox.style.display = 'block';
+            statusBox.textContent = 'Submitting...';
+
+            const submitResult = await callApi('submit', 'POST', payload);
+            if (!submitResult.ok || !submitResult.data?.trackingId) {
+                statusBox.textContent = `Error: HTTP ${submitResult.status}`;
+                return;
+            }
+
+            const trackingId = submitResult.data.trackingId;
+            statusBox.textContent = `Submitted as ${trackingId}. Waiting for a decision...`;
+
+            // Poll /status until the router (or a human) has decided, or give up after ~15s.
+            for (let attempt = 0; attempt < 15; attempt++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const { ok, data } = await callApi(`status/${trackingId}`);
+                if (ok && data && data.status !== 'Pending') {
+                    renderStatusCard(statusBox, data);
+                    return;
+                }
+            }
+            statusBox.textContent = `Submitted as ${trackingId}. Still pending — use "Check Status" below to keep watching.`;
+            document.getElementById('checkTrackingId').value = trackingId;
         });
 
+        // --- Manual status check ---------------------------------------------
+        document.getElementById('checkStatusBtn').addEventListener('click', async () => {
+            const id = document.getElementById('checkTrackingId').value.trim();
+            const box = document.getElementById('checkStatusResult');
+            if (!id) return;
+            box.style.display = 'block';
+            box.textContent = 'Loading...';
+            const { ok, status, data } = await callApi(`status/${id}`);
+            if (!ok) {
+                box.textContent = `HTTP ${status}: not found.`;
+                return;
+            }
+            renderStatusCard(box, data);
+        });
+
+        // --- Escalation queue ---------------------------------------------
+        async function loadEscalations() {
+            const list = document.getElementById('escalationsList');
+            const { ok, data } = await callApi('escalations');
+            if (!ok || !data || data.length === 0) {
+                list.innerHTML = '<p class="empty">No escalated items right now.</p>';
+                return;
+            }
+            const rows = data.map(item => `
+                <tr>
+                    <td>${item.trackingId}</td>
+                    <td>${item.vendor}</td>
+                    <td>${item.category}</td>
+                    <td>${item.totalAmount}</td>
+                    <td>${item.reason}</td>
+                </tr>
+            `).join('');
+            list.innerHTML = `
+                <table>
+                    <thead><tr><th>Tracking ID</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Reason</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+        document.getElementById('refreshEscalationsBtn').addEventListener('click', loadEscalations);
+
+        // --- Manual approve/reject ---------------------------------------------
         document.getElementById('approveBtn').addEventListener('click', async () => {
             const id = document.getElementById('manualTrackingId').value.trim();
-            document.getElementById('manualResult').textContent = await sendRequest(`approve/${id}`);
+            const { status, data } = await callApi(`approve/${id}`, 'POST');
+            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
+            loadEscalations();
         });
 
         document.getElementById('rejectBtn').addEventListener('click', async () => {
             const id = document.getElementById('manualTrackingId').value.trim();
-            document.getElementById('manualResult').textContent = await sendRequest(`reject/${id}`);
+            const { status, data } = await callApi(`reject/${id}`, 'POST');
+            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
+            loadEscalations();
         });
+
+        // --- Dashboard stats ---------------------------------------------
+        async function loadStats() {
+            const panel = document.getElementById('statsPanel');
+            const { ok, data } = await callApi('stats');
+            if (!ok || !data) {
+                panel.innerHTML = '<p class="empty">Could not load stats.</p>';
+                return;
+            }
+            const boxes = [
+                ['Total submitted', data.totalSubmitted],
+                ['Auto-approved (AI)', data.autoApproved],
+                ['Human-approved', data.humanApproved],
+                ['Escalated (pending)', data.escalatedPending],
+                ['Rejected', data.rejected],
+                ['Auto-approval rate', `${Math.round((data.autoApprovalRate ?? 0) * 100)}%`],
+                ['$ auto-approved', data.autoApprovedAmount],
+                ['$ human-approved', data.humanApprovedAmount],
+            ];
+            panel.innerHTML = boxes.map(([label, value]) => `
+                <div class="stat-box"><div class="n">${value}</div><div class="l">${label}</div></div>
+            `).join('');
+        }
+        document.getElementById('refreshStatsBtn').addEventListener('click', loadStats);
+
+        // Initial load
+        loadEscalations();
+        loadStats();
     </script>
 </body>
 </html>

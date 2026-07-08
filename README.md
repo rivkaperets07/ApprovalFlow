@@ -108,3 +108,10 @@ change the decision).
 - `PaymentGateway.ExecuteBankTransferAsync` has no real bank integration; a vendor name
   containing `FailBank` simulates a transfer failure, used to exercise the Saga
   compensation path (see `docs/sample-invoices.json`'s `INV-1012` fixture).
+- Each app container shares its network namespace with its sidecar (`network_mode:
+  service:<app>`). If you rebuild/recreate a single service (e.g.
+  `docker compose up --build -d gateway`), its sidecar is left pointing at a network
+  namespace that no longer exists and every Dapr call from that service starts failing
+  with 500s. Recreate both together:
+  `docker compose up -d --force-recreate <service> <service>-sidecar`, or just
+  `docker compose up --build -d` for the whole stack.
