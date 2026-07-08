@@ -67,6 +67,7 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
 
     invoice.Status = approved ? InvoiceStatus.Approved : InvoiceStatus.Escalated;
     invoice.Reason = reason;
+    invoice.DecidedBy = DecidedBy.Ai;
 
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
 
@@ -74,7 +75,8 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
     {
         TrackingId = trackingId,
         Approved = approved,
-        Reason = reason
+        Reason = reason,
+        DecidedBy = DecidedBy.Ai
     };
 
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", decisionResult);
@@ -104,8 +106,9 @@ app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprC
 
     invoice.Status = InvoiceStatus.Approved;
     invoice.Reason = "Manually approved.";
+    invoice.DecidedBy = DecidedBy.Human;
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason });
+    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
     await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
 
     logger.LogInformation("{CorrelationId} Invoice {TrackingId} approved manually.", trackingId, trackingId);
@@ -127,8 +130,9 @@ app.MapPost("/reject/{trackingId}", async ([FromRoute] string trackingId, DaprCl
 
     invoice.Status = InvoiceStatus.Rejected;
     invoice.Reason = "Manually rejected.";
+    invoice.DecidedBy = DecidedBy.Human;
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason });
+    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
 
     logger.LogInformation("{CorrelationId} Invoice {TrackingId} rejected manually.", trackingId, trackingId);
     return Results.Ok(invoice);
@@ -148,6 +152,12 @@ public static class InvoiceStatus
     public const string Rejected = "Rejected";
 }
 
+public static class DecidedBy
+{
+    public const string Ai = "AI";
+    public const string Human = "Human";
+}
+
 public class InvoicePayload
 {
     public string? TrackingId { get; set; }
@@ -157,6 +167,7 @@ public class InvoicePayload
     public string? Notes { get; set; }
     public string? Status { get; set; }
     public string? Reason { get; set; }
+    public string? DecidedBy { get; set; }
 }
 
 public class DecisionResult
@@ -164,4 +175,5 @@ public class DecisionResult
     public string TrackingId { get; set; } = string.Empty;
     public bool Approved { get; set; }
     public string Reason { get; set; } = string.Empty;
+    public string? DecidedBy { get; set; }
 }
