@@ -16,6 +16,8 @@ builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, rel
 builder.Services.AddDaprClient();
 builder.Services.AddLogging();
 builder.Services.AddSingleton<PolicyEngine>();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "ApprovalFlow DecisionEngine", Version = "v1" }));
 
 var aiProviderName = builder.Configuration.GetValue<string>("AiProvider", "Stub");
 if (string.Equals(aiProviderName, "Groq", StringComparison.OrdinalIgnoreCase))
@@ -28,6 +30,8 @@ else
 }
 
 var app = builder.Build();
+app.UseSwagger();
+app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "ApprovalFlow DecisionEngine v1"));
 app.UseCloudEvents();
 app.MapSubscribeHandler();
 

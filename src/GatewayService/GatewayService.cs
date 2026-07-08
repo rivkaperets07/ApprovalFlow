@@ -11,6 +11,9 @@ using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "ApprovalFlow Gateway", Version = "v1" }));
+
 var daprHttpEndpoint = builder.Configuration.GetValue<string>("DAPR_HTTP_ENDPOINT", "http://localhost:3500");
 builder.Services.AddDaprClient(client => client.UseHttpEndpoint(daprHttpEndpoint));
 builder.Services.AddSingleton<IDaprStateClient, DaprStateClient>();
@@ -46,6 +49,8 @@ var app = builder.Build();
 
 app.UseCors();
 app.UseRateLimiter();
+app.UseSwagger();
+app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "ApprovalFlow Gateway v1"));
 app.UseCloudEvents();
 app.MapSubscribeHandler();
 
