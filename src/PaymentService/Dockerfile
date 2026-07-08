@@ -1,14 +1,16 @@
-﻿# Use the official .NET 8 SDK image for building
+# Use the official .NET 8 SDK image for building
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /app
+WORKDIR /src
 
-# Copy the project file and restore dependencies
-COPY *.csproj ./
-RUN dotnet restore
+# Restore against the project + its shared-contracts reference. Build context is ./src
+# (see docker-compose.yml) so the Shared.Contracts project is reachable.
+COPY Shared.Contracts/Shared.Contracts.csproj Shared.Contracts/
+COPY PaymentService/PaymentService.csproj PaymentService/
+RUN dotnet restore PaymentService/PaymentService.csproj
 
-# Copy the remaining source code and publish
-COPY . .
-RUN dotnet publish -c Release -o out
+COPY Shared.Contracts/ Shared.Contracts/
+COPY PaymentService/ PaymentService/
+RUN dotnet publish PaymentService/PaymentService.csproj -c Release -o /app/out
 
 # Build the runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0

@@ -1,11 +1,15 @@
-﻿FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /app
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
 
-COPY *.csproj ./
-RUN dotnet restore
+# Restore against the project + its shared-contracts reference. Build context is ./src
+# (see docker-compose.yml) so the Shared.Contracts project is reachable.
+COPY Shared.Contracts/Shared.Contracts.csproj Shared.Contracts/
+COPY GatewayService/GatewayService.csproj GatewayService/
+RUN dotnet restore GatewayService/GatewayService.csproj
 
-COPY . ./
-RUN dotnet publish -c Release -o out
+COPY Shared.Contracts/ Shared.Contracts/
+COPY GatewayService/ GatewayService/
+RUN dotnet publish GatewayService/GatewayService.csproj -c Release -o /app/out
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
