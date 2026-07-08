@@ -61,17 +61,32 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
     var trackingId = invoice.TrackingId ?? Guid.NewGuid().ToString();
     invoice.TrackingId = trackingId;
 
+    // The risk threshold never depends on category, so don't spend an AI call (cost,
+    // latency, rate limit) on an invoice that's escalating regardless of what the AI says.
     RouterDecision decision;
-    try
+    string decidedBy;
+    var fastReject = policyEngine.TryFastRejectOnRiskThreshold(invoice);
+    if (fastReject is not null)
     {
-        var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
-        decision = await policyEngine.EvaluateAsync(invoice, aiResult);
+        decision = fastReject;
+        decidedBy = DecidedBy.System;
+        logger.LogInformation("{CorrelationId} Invoice {TrackingId} exceeds the risk threshold; skipping AI classification.", trackingId, trackingId);
     }
-    catch (Exception ex)
+    else
     {
-        // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
-        logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
-        decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
+        try
+        {
+            var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
+            decision = await policyEngine.EvaluateAsync(invoice, aiResult);
+            decidedBy = DecidedBy.Ai;
+        }
+        catch (Exception ex)
+        {
+            // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
+            logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
+            decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
+            decidedBy = DecidedBy.System;
+        }
     }
 
     var approved = decision.IsApproved;
@@ -79,7 +94,7 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
 
     invoice.Status = approved ? InvoiceStatus.Approved : InvoiceStatus.Escalated;
     invoice.Reason = reason;
-    invoice.DecidedBy = DecidedBy.Ai;
+    invoice.DecidedBy = decidedBy;
 
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
 
@@ -88,7 +103,7 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
         TrackingId = trackingId,
         Approved = approved,
         Reason = reason,
-        DecidedBy = DecidedBy.Ai
+        DecidedBy = decidedBy
     };
 
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", decisionResult);
@@ -168,6 +183,8 @@ public static class DecidedBy
 {
     public const string Ai = "AI";
     public const string Human = "Human";
+    /// <summary>A guardrail fired without consulting the AI (risk threshold) or a provider error forced escalation.</summary>
+    public const string System = "System";
 }
 
 public class InvoicePayload

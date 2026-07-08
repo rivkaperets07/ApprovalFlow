@@ -65,6 +65,28 @@ public class PolicyEngineTests
     }
 
     [Fact]
+    public void TryFastRejectOnRiskThreshold_OverThreshold_ReturnsEscalatedWithoutAi()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+
+        var result = engine.TryFastRejectOnRiskThreshold(Invoice(5001m));
+
+        Assert.NotNull(result);
+        Assert.False(result!.IsApproved);
+        Assert.Contains("risk threshold", result.Reason);
+    }
+
+    [Fact]
+    public void TryFastRejectOnRiskThreshold_UnderThreshold_ReturnsNull()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+
+        var result = engine.TryFastRejectOnRiskThreshold(Invoice(350m));
+
+        Assert.Null(result);
+    }
+
+    [Fact]
     public async Task OverGlobalRiskThreshold_IsEscalated_RegardlessOfCategory()
     {
         // This is the M12 guarantee: even a category with a very generous ceiling

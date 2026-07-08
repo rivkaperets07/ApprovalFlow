@@ -22,6 +22,23 @@ public class PolicyEngine
         _daprClient = daprClient;
     }
 
+    /// <summary>
+    /// Cheap, synchronous, no-AI pre-check. The risk threshold never depends on category,
+    /// so there is no reason to pay for an AI classification call when the amount alone
+    /// already forces an escalation — the caller should check this first and only invoke
+    /// the AI provider when it returns null. EvaluateAsync also re-checks the threshold
+    /// (defense in depth for any caller that skips this fast path), so skipping straight
+    /// to EvaluateAsync is never unsafe, only sometimes wasteful.
+    /// </summary>
+    public RouterDecision? TryFastRejectOnRiskThreshold(InvoicePayload invoice)
+    {
+        var guardrails = _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();
+        if (invoice.TotalAmount > guardrails.RiskThreshold)
+            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the global risk threshold of {guardrails.RiskThreshold:C}.");
+
+        return null;
+    }
+
     public async Task<RouterDecision> EvaluateAsync(InvoicePayload invoice, AiAnalysisResult aiResult)
     {
         var guardrails = _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();

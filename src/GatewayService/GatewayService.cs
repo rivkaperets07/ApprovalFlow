@@ -71,11 +71,31 @@ app.MapPost("/submit", async ([FromBody] InvoicePayload invoice, DaprClient dapr
     invoice.TrackingId ??= Guid.NewGuid().ToString();
     invoice.Status = InvoiceStatus.Pending;
     invoice.Reason = "Submission received and published for decision.";
+    invoice.SubmittedAt = DateTimeOffset.UtcNow;
 
     var alreadySubmitted = await submissionStore.HasBeenSubmittedAsync(invoice.TrackingId);
     if (alreadySubmitted)
     {
         logger.LogWarning("{CorrelationId} Duplicate submission ignored for invoice {TrackingId}.", invoice.TrackingId, invoice.TrackingId);
+        return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
+    }
+
+    // GLOBAL-FRAUD (docs/policy.md): a *different* trackingId can still be the same
+    // accidental double-submit if it's the same vendor and amount within 24h. Blocked
+    // here, before anything is published, rather than left for DecisionEngine to catch.
+    var isDuplicateRisk = await FraudGuard.IsLikelyDuplicateAsync(daprClient, StateStoreName, invoice.Vendor, invoice.TotalAmount, invoice.SubmittedAt.Value);
+    if (isDuplicateRisk)
+    {
+        invoice.Status = InvoiceStatus.Escalated;
+        invoice.Reason = "Blocked: another submission from this vendor for the same amount was received within the last 24 hours (GLOBAL-FRAUD guardrail).";
+        invoice.DecidedBy = DecidedBy.System;
+
+        await daprClient.SaveStateAsync(StateStoreName, GetStateKey(invoice.TrackingId), invoice);
+        await submissionStore.MarkSubmittedAsync(invoice.TrackingId);
+        await StateIndex.AddAsync(daprClient, StateStoreName, SubmittedIndexKey, invoice.TrackingId);
+        await StateIndex.AddAsync(daprClient, StateStoreName, EscalatedIndexKey, invoice.TrackingId);
+
+        logger.LogWarning("{CorrelationId} Invoice {TrackingId} blocked by GLOBAL-FRAUD guardrail (same vendor+amount within 24h).", invoice.TrackingId, invoice.TrackingId);
         return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
     }
 
@@ -112,7 +132,8 @@ app.MapGet("/status/{trackingId}", async ([FromRoute] string trackingId, DaprCli
         invoice.TotalAmount,
         invoice.DecidedBy,
         invoice.PaymentStatus,
-        invoice.PaymentMessage
+        invoice.PaymentMessage,
+        invoice.SubmittedAt
     });
 });
 
@@ -283,6 +304,8 @@ public static class DecidedBy
 {
     public const string Ai = "AI";
     public const string Human = "Human";
+    /// <summary>A hard-coded guardrail (e.g. GLOBAL-FRAUD) blocked it before any AI or human was involved.</summary>
+    public const string System = "System";
 }
 
 public class DecisionResult
@@ -316,4 +339,5 @@ public class InvoicePayload
     public string? DecidedBy { get; set; }
     public string? PaymentStatus { get; set; }
     public string? PaymentMessage { get; set; }
+    public DateTimeOffset? SubmittedAt { get; set; }
 }
