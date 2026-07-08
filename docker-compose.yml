@@ -35,10 +35,14 @@
       dockerfile: Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
+      - AiProvider=${AI_PROVIDER:-Stub}
     depends_on:
       - redis
     volumes:
       - ./components:/components
+      # Bind-mounted (not baked into the image) so policy thresholds can be edited
+      # and picked up live via reloadOnChange, without rebuilding/redeploying (F7, M13).
+      - ./src/DecisionEngine/Policies:/app/Policies
     networks:
       - approval-flow-network
 
@@ -69,6 +73,10 @@
     image: daprio/daprd:1.13.0
     network_mode: service:decision-engine
     command: ["/daprd","--app-id","decision-engine","--app-port","8080","--dapr-http-port","3500","--resources-path","/components"]
+    environment:
+      # Read by the secretstores.local.env component so GroqAiModelProvider can
+      # fetch it via DaprClient.GetSecretAsync (M5). Empty is fine while AiProvider=Stub.
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
     depends_on:
       - decision-engine
       - redis

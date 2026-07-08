@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Dapr.Client;
 using DecisionEngine.Core.Models;
 
 namespace DecisionEngine.Ai;
@@ -16,26 +17,30 @@ public class GroqAiModelProvider : IAiModelProvider
 {
     private const string Endpoint = "https://api.groq.com/openai/v1/chat/completions";
     private const string Model = "llama-3.1-8b-instant";
+    private const string SecretStoreName = "secretstore";
+    private const string ApiKeySecretName = "GROQ_API_KEY";
 
     private static readonly string[] KnownCategories =
         ["SaaS", "Hardware", "Meals", "Travel", "OfficeSupplies", "Marketing", "Other"];
 
     private readonly HttpClient _httpClient;
-    private readonly string _apiKey;
+    private readonly DaprClient _daprClient;
     private readonly ILogger<GroqAiModelProvider> _logger;
+    private string? _cachedApiKey;
 
-    public GroqAiModelProvider(HttpClient httpClient, IConfiguration config, ILogger<GroqAiModelProvider> logger)
+    public GroqAiModelProvider(HttpClient httpClient, DaprClient daprClient, ILogger<GroqAiModelProvider> logger)
     {
         _httpClient = httpClient;
-        _apiKey = config["GROQ_API_KEY"]
-            ?? throw new InvalidOperationException("GROQ_API_KEY is not configured. Set it via Dapr secrets or the environment, or switch AiProvider to \"Stub\".");
+        _daprClient = daprClient;
         _logger = logger;
     }
 
     public async Task<AiAnalysisResult> AnalyzeAsync(InvoicePayload invoice, CancellationToken cancellationToken)
     {
+        var apiKey = await GetApiKeyAsync(cancellationToken);
+
         var request = new HttpRequestMessage(HttpMethod.Post, Endpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Content = new StringContent(BuildRequestBody(invoice), Encoding.UTF8, "application/json");
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -58,6 +63,23 @@ public class GroqAiModelProvider : IAiModelProvider
         }
 
         return parsed;
+    }
+
+    private async Task<string> GetApiKeyAsync(CancellationToken cancellationToken)
+    {
+        if (_cachedApiKey is not null)
+            return _cachedApiKey;
+
+        var secrets = await _daprClient.GetSecretAsync(SecretStoreName, ApiKeySecretName, cancellationToken: cancellationToken);
+        if (!secrets.TryGetValue(ApiKeySecretName, out var apiKey) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException(
+                $"Secret '{ApiKeySecretName}' is empty in the '{SecretStoreName}' Dapr secret store. " +
+                "Set it in the environment backing that store, or switch AiProvider to \"Stub\".");
+        }
+
+        _cachedApiKey = apiKey;
+        return apiKey;
     }
 
     private static string BuildRequestBody(InvoicePayload invoice)
