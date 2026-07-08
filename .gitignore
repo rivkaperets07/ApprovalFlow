@@ -13,6 +13,9 @@ out/
 .vscode/*
 !.vscode/extensions.json
 
+# Claude Code harness-internal state (not part of the project)
+.claude/
+
 # Environment / secrets
 .env
 *.local.json
