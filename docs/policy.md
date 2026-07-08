@@ -1,72 +1,76 @@
-# Corporate Expense & Invoice Approval Policy
+# Northwind Components Ltd. — Expense & Invoice Policy (v1)
 
-## 1. Overview & Governance
-This document defines the automated expense and invoice approval policy for the enterprise. To ensure strict compliance, financial safety, and fraud prevention, our system implements a **Hybrid Router-Decides Architecture**. 
+> This is the policy your **ApprovalFlow** system enforces. It is written to be read by a human **and**
+> consumed by your agent. A baseline may load this policy directly; the Nice-to-Have RAG work is to
+> retrieve only the *relevant* rule(s) instead of putting the whole policy in the prompt.
+> Each rule has a stable **`rule_id`** — emit these in the agent's `policy_violations[].rule_id`.
+> You may extend this policy, and you may **tune the thresholds** in §6 — but if you change them you must say so
+> and justify it in `docs/PRODUCT-DILEMMA.md`, and the numbers there must match what your router actually enforces.
 
-The system boundary ensures that while AI is leveraged for semantic analysis, data extraction, and contextual classification, **all financial ceilings and compliance rules are strictly enforced by deterministic code (C# Guardrails).** The system is provably incapable of over-stepping the autonomous thresholds defined below.
-
----
-
-## 2. Global Guardrails (Deterministic Pre/Post-Filters)
-These rules apply universally to all incoming invoices and expenses, regardless of their specific category. They are executed within the application code as hard boundaries.
-
-* **GLOBAL-VENDOR:** Every vendor must exist within the master corporate registry. Transactions from unregistered or blacklisted vendors are blocked and escalated immediately.
-* **GLOBAL-MATH:** A maximum variance of up to 2% or $10.00 (whichever is lower) between the calculated sum of line-items and the claimed receipt total is automatically tolerated. Any discrepancy above this threshold is blocked.
-* **GLOBAL-FX:** Any transaction denominated in a foreign currency (non-USD) that exceeds an equivalent of $1,000.00 requires mandatory human review.
-* **GLOBAL-FRAUD:** Duplicate submission protection is enforced. Multiple transactions featuring identical amounts from the same vendor within a rolling 24-hour window are systematically blocked to prevent double-payment.
-* **GLOBAL-RECEIPT:** An itemized, line-by-line breakdown is strictly mandatory for any transaction exceeding $25.00.
+Base currency: **USD**. All amounts are converted to USD at the **submission-date** rate before rules are applied.
 
 ---
 
-## 3. Autonomous Escalation Logic (Fail-Fast Boundaries)
-The system will immediately bypass AI evaluation or override AI approval recommendations, routing the invoice to a human auditor, under the following conditions:
+## 1. Meals & Entertainment
 
-* **RISK-THRESHOLD:** Any single invoice or expense with a `TotalAmount` exceeding **$5,000.00** is strictly stripped of autonomy and routed directly to human review.
-* **CONFIDENCE-THRESHOLD:** If the AI Agent's classification or extraction confidence score drops below **0.80** (or **0.90** for specific high-risk categories), the transaction is flagged as volatile and escalated.
+| rule_id | Rule |
+|---|---|
+| `MEAL-01` | Personal meals are reimbursable up to **$75 per submission**. Each person expenses their own meal separately — a submission is never scaled up by a headcount. |
+| `MEAL-02` | **Client entertainment** over **$500** requires a **business justification** and a **client name**. Missing either → escalate. |
+| `MEAL-03` | Alcohol-only receipts are not reimbursable. |
 
----
+## 2. Travel
 
-## 4. Category-Specific Policies & Autonomy Ceilings
+| rule_id | Rule |
+|---|---|
+| `TRAVEL-01` | Economy flights, standard hotels, and standard/economy ground transport (taxi, rideshare, transit) are policy-eligible. |
+| `TRAVEL-02` | Any single travel expense over **$1,500** requires **manager approval** (never autonomous). |
+| `TRAVEL-03` | First/business-class travel always requires approval. |
 
-### 4.1 SaaS (Subscriptions & Software Licenses)
-* **Description:** Monthly/annual software-as-a-service fees, cloud infrastructure, and tool licenses.
-* **Autonomy Ceiling:** Up to **$500.00** flat per invoice.
-* **Minimum AI Confidence:** 0.80
+## 3. Software / SaaS
 
-### 4.2 Hardware & Equipment
-* **Description:** Laptops, peripherals, office machinery, and physical tech assets.
-* **Autonomy Ceiling:** Up to **$250.00** flat per invoice.
-* **Minimum AI Confidence:** 0.85
+| rule_id | Rule |
+|---|---|
+| `SAAS-01` | Subscriptions are policy-eligible up to **$200 / month**. |
 
-### 4.3 Meals & Hospitality
-* **Description:** Business entertainment, client dinners, and internal team-building meals.
-* **Mandatory Rule:** Must explicitly contain an itemized list of all attendees. **Individual dining during corporate travel does NOT belong under this category.**
-* **Autonomy Ceiling:** Dynamically calculated at **$75.00 multiplied by the number of verified attendees** extracted by the AI.
-* **Minimum AI Confidence:** 0.90 (High-strictness classification).
+## 4. Hardware
 
-### 4.4 Travel, Lodging & Personal Transit
-* **Description:** Flights, hotels, car rentals, and incidental travel expenses.
-* **Mandatory Rule:** Must explicitly map to a valid, pre-approved `TripId`.
-* **Trip Budget Cap:** Maximum cumulative total of **$2,000.00** per `TripId` (tracked dynamically across line-items via the distributed State Store).
-* **Daily Allowance (Per Diem):** Maximum of **$200.00 per day** per receipt. This allowance covers personal meals while traveling, airport transit, and hotel incidentals.
-* **Minimum AI Confidence:** 0.85
+| rule_id | Rule |
+|---|---|
+| `HW-01` | Hardware purchases are policy-eligible up to **$1,000**. |
+| `HW-02` | Hardware **over $1,000** is a **Capital** expense → **always human-approved**. |
 
-### 4.5 Office Supplies & Operations (Extended Category)
-* **Description:** General office stationary, printing supplies, and day-to-day workplace operational needs.
-* **Autonomy Ceiling:** Up to **$150.00** flat per invoice.
-* **Minimum AI Confidence:** 0.80
+## 5. Global rules
 
-### 4.6 Marketing & Advertising (Extended Category)
-* **Description:** Digital ad spend (Google Ads, Meta), promotional merchandise, and corporate event campaigns.
-* **Autonomy Ceiling:** Up to **$1,500.00** extended ceiling (validated against corporate ad accounts).
-* **Minimum AI Confidence:** 0.85
+| rule_id | Rule |
+|---|---|
+| `GLOBAL-RECEIPT` | A **receipt is required for any expense over $25**. Missing → *missing info* → escalate. |
+| `GLOBAL-VENDOR` | A **new / unknown vendor** is **always reviewed** by a human, regardless of amount/category. |
+| `GLOBAL-FX` | Foreign-currency items are converted to USD. A converted amount above the autonomy ceiling (or any FX item over **$1,000**) is a **hard stop** → human. |
+| `GLOBAL-DUP` | A **duplicate** (same `vendor` + `invoiceNumber` + `total`) is rejected as a duplicate — **no second payment**. |
+| `GLOBAL-MATH` | The line items + tax **must reconcile** to `total`. A mismatch is a hard stop → escalate (never auto-approve). |
+| `GLOBAL-FRAUD` | Fraud-pattern signals (round-number to a brand-new vendor, no line-item detail, off-hours, padded quantities) are a **hard stop** → human review with the signal recorded. |
 
 ---
 
-## 5. Architectural Compliance Mapping
+## 6. Autonomy thresholds (the dilemma — **default posture; tune & justify**)
 
-| Policy Requirement | Enforcement Mechanism | Failure Mode | Target Audience |
-| :--- | :--- | :--- | :--- |
-| **Risk Containment** | Code-level `if (Amount > 5000)` check prior to AI inference. | Immediate Escalation | Executive Board / Risk Management |
-| **Volatility Management** | Structural verification of `ConfidenceScore` in C# Service. | Immediate Escalation | AI Engineering / Auditors |
-| **Dynamic Ceilings** | Programmatic calculation (`75 * AttendeesCount`) applied post-inference. | Immediate Over-rule | Financial Compliance |
+These govern what the **agent may approve with NO human involvement**. They are deliberately conservative defaults;
+resolving the central dilemma means *choosing your own* and defending them.
+
+| key | default | meaning |
+|---|---|---|
+| `AUTONOMY-CEILING` | **$250** | The agent may auto-approve only when the USD amount is **≤ $250**. Above this → human, *even at confidence 1.0*. |
+| `AUTONOMY-CONFIDENCE` | **0.80** | The agent may auto-approve only when its `confidence` is **≥ 0.80**. Below → human. |
+| `AUTONOMY-HARDSTOPS` | — | Regardless of amount/confidence, these **always** force a human: new/unknown vendor (`GLOBAL-VENDOR`), FX hard stop (`GLOBAL-FX`), math mismatch (`GLOBAL-MATH`), any fraud signal (`GLOBAL-FRAUD`), missing required receipt (`GLOBAL-RECEIPT`), missing required info (`MEAL-01`/`MEAL-02`). |
+
+**An item is `auto_approve` only if ALL hold:** amount ≤ `AUTONOMY-CEILING` · `confidence` ≥ `AUTONOMY-CONFIDENCE` ·
+policy-compliant for its category · **no** hard stop. Otherwise it is `human_review` (or `reject` for a
+high-severity violation, `duplicate` for a re-submission). **The deterministic router enforces this — the agent only recommends.**
+
+---
+
+## 7. Department budgets (for the no-overspend / concurrency scenario)
+
+Budgets are finite and **must not be overspent** by two concurrent approvals. See `sample-invoices.json → budgets`.
+Reserving budget is a saga step with a compensating *release* on failure.

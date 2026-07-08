@@ -16,8 +16,8 @@
 
   gateway:
     build:
-      context: ./src/GatewayService
-      dockerfile: Dockerfile
+      context: ./src
+      dockerfile: GatewayService/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
     ports:
@@ -26,13 +26,17 @@
       - redis
     volumes:
       - ./components:/components
+      # Same known-vendor list DecisionEngine uses, shared as config (not a runtime call)
+      # so GLOBAL-FRAUD's "brand-new vendor" check works without depending on another
+      # service being up (see GatewayService.cs).
+      - ./src/DecisionEngine/Ai/vendor-directory.json:/app/Ai/vendor-directory.json:ro
     networks:
       - approval-flow-network
 
   decision-engine:
     build:
-      context: ./src/DecisionEngine
-      dockerfile: Dockerfile
+      context: ./src
+      dockerfile: DecisionEngine/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
       - AiProvider=${AI_PROVIDER:-Stub}
@@ -48,8 +52,8 @@
 
   payment-service:
     build:
-      context: ./src/PaymentService
-      dockerfile: Dockerfile
+      context: ./src
+      dockerfile: PaymentService/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
     depends_on:

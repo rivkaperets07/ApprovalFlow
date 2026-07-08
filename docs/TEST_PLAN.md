@@ -3,14 +3,14 @@
 ## 1. Automated Unit Testing Strategy
 The system logic is isolated within the `DecisionEngine` and `PaymentService`. We will use unit tests to verify:
 * **Policy Enforcement**: Mocking `InvoicePayload` to ensure hard stops (e.g., missing receipts) trigger `human_review` status.
-* **Autonomy Logic**: Testing category-specific thresholds (SaaS $500, Meals $75/attendee).
+* **Autonomy Logic**: Testing category-specific thresholds (SaaS $500, Meals $75 flat).
 
 ## 2. Integration & Saga Testing Scenarios (The Critical Path)
 
 | Test ID | Scenario | Input Data | Expected Result |
 | :--- | :--- | :--- | :--- |
 | **TC-01** | Standard SaaS Approval | SaaS, $200, Conf: 0.9 | `auto_approve` -> `PaymentService` |
-| **TC-02** | Meal Policy Limit | Meals, 2 attendees, $140 | `auto_approve` (Within $150 limit) |
+| **TC-02** | Meal Policy Limit | Meals, $70 | `auto_approve` (Within $75 limit) |
 | **TC-03** | Missing Receipt Stop | Hardware, $50, No Receipt | `human_review` (Hard Stop Rule) |
 | **TC-04** | Saga Compensation | Valid Invoice, Bank API Fail | `Rollback` -> Budget Released |
 

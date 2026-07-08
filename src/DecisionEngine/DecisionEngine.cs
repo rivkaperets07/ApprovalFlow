@@ -1,15 +1,12 @@
 using System.Globalization;
-using Dapr;
-using Dapr.Client;
 using DecisionEngine.Ai;
 using DecisionEngine.Core.Logic;
-using DecisionEngine.Core.Models;
+using DecisionEngine.Endpoints;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 // The container's default culture has no currency symbol (renders "$" as "¤"), which
 // would otherwise leak into every escalation/approval Reason string. Pin it explicitly
@@ -44,186 +41,7 @@ app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "ApprovalFlo
 app.UseCloudEvents();
 app.MapSubscribeHandler();
 
-const string StateStoreName = "statestore";
-const string PubSubName = "pubsub";
-
-app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async (
-    [FromBody] InvoicePayload invoice,
-    DaprClient daprClient,
-    IAiModelProvider aiProvider,
-    PolicyEngine policyEngine,
-    ILogger<Program> logger) =>
-{
-    if (invoice is null)
-    {
-        return Results.BadRequest();
-    }
-
-    var trackingId = invoice.TrackingId ?? Guid.NewGuid().ToString();
-    invoice.TrackingId = trackingId;
-
-    // The risk threshold never depends on category, so don't spend an AI call (cost,
-    // latency, rate limit) on an invoice that's escalating regardless of what the AI says.
-    RouterDecision decision;
-    string decidedBy;
-    var fastReject = policyEngine.TryFastRejectOnRiskThreshold(invoice);
-    if (fastReject is not null)
-    {
-        decision = fastReject;
-        decidedBy = DecidedBy.System;
-        logger.LogInformation("{CorrelationId} Invoice {TrackingId} exceeds the risk threshold; skipping AI classification.", trackingId, trackingId);
-    }
-    else
-    {
-        try
-        {
-            var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
-            invoice.AiSuggestedCategory = aiResult.SuggestedCategory;
-            invoice.AiConfidence = aiResult.ConfidenceScore;
-            decision = await policyEngine.EvaluateAsync(invoice, aiResult);
-            decidedBy = DecidedBy.Ai;
-        }
-        catch (Exception ex)
-        {
-            // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
-            logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
-            decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
-            decidedBy = DecidedBy.System;
-        }
-    }
-
-    var approved = decision.IsApproved;
-    var reason = decision.Reason;
-
-    invoice.Status = approved ? InvoiceStatus.Approved : InvoiceStatus.Escalated;
-    invoice.Reason = reason;
-    invoice.DecidedBy = decidedBy;
-
-    await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-
-    var decisionResult = new DecisionResult
-    {
-        TrackingId = trackingId,
-        Approved = approved,
-        Reason = reason,
-        DecidedBy = decidedBy
-    };
-
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", decisionResult);
-
-    logger.LogInformation("{CorrelationId} Decision made for invoice {TrackingId}: {Approved} ({Reason})", trackingId, trackingId, approved, reason);
-
-    if (approved)
-    {
-        await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
-    }
-
-    return Results.Ok(decisionResult);
-});
-
-// Known vendors the Stub classifier can confidently map to a category, so a submitter
-// (or the UI) can see which names actually give the router a strong signal.
-app.MapGet("/vendors", (IConfiguration config) =>
-{
-    var vendors = config.GetSection("VendorDirectory").GetChildren()
-        .Select(entry => new { Vendor = entry.Key, Category = entry.Value })
-        .OrderBy(v => v.Vendor)
-        .ToList();
-
-    return Results.Ok(vendors);
-});
-
-app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger) =>
-{
-    if (string.IsNullOrWhiteSpace(trackingId))
-    {
-        return Results.BadRequest(new { error = "trackingId is required." });
-    }
-
-    var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
-    if (invoice is null)
-    {
-        return Results.NotFound(new { trackingId, message = "Invoice not found." });
-    }
-
-    invoice.Status = InvoiceStatus.Approved;
-    invoice.Reason = "Manually approved.";
-    invoice.DecidedBy = DecidedBy.Human;
-    await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
-    await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
-
-    logger.LogInformation("{CorrelationId} Invoice {TrackingId} approved manually.", trackingId, trackingId);
-    return Results.Ok(invoice);
-});
-
-app.MapPost("/reject/{trackingId}", async ([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger) =>
-{
-    if (string.IsNullOrWhiteSpace(trackingId))
-    {
-        return Results.BadRequest(new { error = "trackingId is required." });
-    }
-
-    var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
-    if (invoice is null)
-    {
-        return Results.NotFound(new { trackingId, message = "Invoice not found." });
-    }
-
-    invoice.Status = InvoiceStatus.Rejected;
-    invoice.Reason = "Manually rejected.";
-    invoice.DecidedBy = DecidedBy.Human;
-    await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
-
-    logger.LogInformation("{CorrelationId} Invoice {TrackingId} rejected manually.", trackingId, trackingId);
-    return Results.Ok(invoice);
-});
-
+app.MapInvoiceEndpoints();
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 
 app.Run();
-
-static string GetStateKey(string trackingId) => $"invoice-{trackingId}";
-
-public static class InvoiceStatus
-{
-    public const string Pending = "Pending";
-    public const string Approved = "Approved";
-    public const string Escalated = "Escalated";
-    public const string Rejected = "Rejected";
-}
-
-public static class DecidedBy
-{
-    public const string Ai = "AI";
-    public const string Human = "Human";
-    /// <summary>A guardrail fired without consulting the AI (risk threshold) or a provider error forced escalation.</summary>
-    public const string System = "System";
-}
-
-public class InvoicePayload
-{
-    public string? TrackingId { get; set; }
-    public string Vendor { get; set; } = string.Empty;
-    public decimal TotalAmount { get; set; }
-    public string Category { get; set; } = string.Empty;
-    public string? Notes { get; set; }
-    public string? Status { get; set; }
-    public string? Reason { get; set; }
-    public string? DecidedBy { get; set; }
-
-    /// <summary>What the AI actually classified this as — distinct from Category above,
-    /// which is just whatever text the submitter typed and plays no role in the decision.
-    /// Null when the AI was never consulted (e.g. fast-rejected on the risk threshold).</summary>
-    public string? AiSuggestedCategory { get; set; }
-    public double? AiConfidence { get; set; }
-}
-
-public class DecisionResult
-{
-    public string TrackingId { get; set; } = string.Empty;
-    public bool Approved { get; set; }
-    public string Reason { get; set; } = string.Empty;
-    public string? DecidedBy { get; set; }
-}

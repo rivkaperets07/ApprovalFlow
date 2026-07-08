@@ -23,31 +23,24 @@ public class PolicyEngine
     }
 
     /// <summary>
-    /// Cheap, synchronous, no-AI pre-check. The risk threshold never depends on category,
-    /// so there is no reason to pay for an AI classification call when the amount alone
-    /// already forces an escalation — the caller should check this first and only invoke
-    /// the AI provider when it returns null. EvaluateAsync also re-checks the threshold
-    /// (defense in depth for any caller that skips this fast path), so skipping straight
-    /// to EvaluateAsync is never unsafe, only sometimes wasteful.
+    /// Cheap, synchronous, no-AI pre-check: the risk threshold, and the GLOBAL-RECEIPT /
+    /// GLOBAL-MATH guardrails, none of which depend on category. There's no reason to pay
+    /// for an AI classification call on an invoice that's escalating on amount/receipt
+    /// grounds alone — the caller should check this first and only invoke the AI provider
+    /// when it returns null. EvaluateAsync re-checks the same guardrails (defense in depth
+    /// for any caller that skips this fast path), so skipping straight to EvaluateAsync is
+    /// never unsafe, only sometimes wasteful.
     /// </summary>
-    public RouterDecision? TryFastRejectOnRiskThreshold(InvoicePayload invoice)
-    {
-        var guardrails = _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();
-        if (invoice.TotalAmount > guardrails.RiskThreshold)
-            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the global risk threshold of {guardrails.RiskThreshold:C}.");
-
-        return null;
-    }
+    public RouterDecision? TryFastRejectOnGlobalGuardrails(InvoicePayload invoice)
+        => CheckGlobalGuardrails(invoice, LoadGuardrails(), LoadKnownVendors());
 
     public async Task<RouterDecision> EvaluateAsync(InvoicePayload invoice, AiAnalysisResult aiResult)
     {
-        var guardrails = _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();
+        var guardrails = LoadGuardrails();
 
-        // Absolute ceiling, checked before category logic. This is what makes the ceiling
-        // provable regardless of category: the AI cannot escape it by picking a more
-        // generous category, because this check does not depend on the category at all.
-        if (invoice.TotalAmount > guardrails.RiskThreshold)
-            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the global risk threshold of {guardrails.RiskThreshold:C}.");
+        var globalReject = CheckGlobalGuardrails(invoice, guardrails, LoadKnownVendors());
+        if (globalReject is not null)
+            return globalReject;
 
         var category = aiResult.SuggestedCategory;
         var policy = _config.GetSection($"ExpensePolicies:{category}").Get<PolicyConfig>();
@@ -67,11 +60,93 @@ public class PolicyEngine
 
         return effectiveCategory switch
         {
-            "Meals" => EvaluateMeals(invoice, aiResult, policy),
+            "Meals" => EvaluateMeals(invoice, policy),
             "Travel" => await EvaluateTravelAsync(invoice, aiResult, policy),
             _ => EvaluateFlat(invoice, policy, effectiveCategory)
         };
     }
+
+    private GlobalGuardrailsConfig LoadGuardrails()
+        => _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();
+
+    private IReadOnlySet<string> LoadKnownVendors()
+        => _config.GetSection("VendorDirectory").GetChildren()
+            .Select(entry => entry.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static RouterDecision? CheckGlobalGuardrails(InvoicePayload invoice, GlobalGuardrailsConfig guardrails, IReadOnlySet<string> knownVendors)
+    {
+        // Absolute ceiling, checked before category logic. This is what makes the ceiling
+        // provable regardless of category: the AI cannot escape it by picking a more
+        // generous category, because this check does not depend on the category at all.
+        if (invoice.TotalAmount > guardrails.RiskThreshold)
+            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the global risk threshold of {guardrails.RiskThreshold:C}.");
+
+        // GLOBAL-VENDOR (docs/policy.md): a vendor the company has never dealt with before
+        // is always reviewed by a human, regardless of amount or category — checked before
+        // any category logic so a generous category ceiling (or a confident AI guess) can
+        // never paper over an unrecognized vendor.
+        if (!knownVendors.Contains(invoice.Vendor.Trim()))
+            return RouterDecision.Escalated($"Vendor '{invoice.Vendor}' is not in the known-vendor directory (GLOBAL-VENDOR).");
+
+        // GLOBAL-FX (docs/policy.md): TotalAmount is already the USD-converted amount (no
+        // live FX lookup here — the submitter states the original currency directly). Any
+        // FX item over the configured amount is a hard stop regardless of category ceiling.
+        if (!string.IsNullOrWhiteSpace(invoice.Currency) &&
+            !string.Equals(invoice.Currency.Trim(), "USD", StringComparison.OrdinalIgnoreCase) &&
+            invoice.TotalAmount > guardrails.FxMaxAmount)
+            return RouterDecision.Escalated($"Foreign-currency ({invoice.Currency}) item of {invoice.TotalAmount:C} exceeds the {guardrails.FxMaxAmount:C} FX ceiling (GLOBAL-FX).");
+
+        // GLOBAL-RECEIPT / GLOBAL-MATH (docs/policy.md): no OCR — the submitter provides
+        // the line items directly (structured input), never inferred by the AI.
+        if (invoice.TotalAmount > guardrails.ReceiptRequiredAbove)
+        {
+            if (invoice.LineItems is null || invoice.LineItems.Count == 0)
+                return RouterDecision.Escalated($"An itemized line-by-line breakdown is required for invoices over {guardrails.ReceiptRequiredAbove:C} (GLOBAL-RECEIPT).");
+
+            var lineItemsTotal = invoice.LineItems.Sum(item => item.Amount);
+            var tolerance = Math.Min(invoice.TotalAmount * (decimal)guardrails.MathToleranceFraction, guardrails.MathToleranceCap);
+            var variance = Math.Abs(invoice.TotalAmount - lineItemsTotal);
+            if (variance > tolerance)
+                return RouterDecision.Escalated($"Line items sum to {lineItemsTotal:C}, which differs from the claimed total {invoice.TotalAmount:C} by {variance:C} (allowed: {tolerance:C}) (GLOBAL-MATH).");
+        }
+
+        return null;
+    }
+
+    private static readonly string[] AlcoholKeywords =
+        ["beer", "wine", "liquor", "cocktail", "alcohol", "spirits", "whiskey", "vodka", "tequila", "champagne", "bar tab"];
+
+    private static RouterDecision EvaluateMeals(InvoicePayload invoice, PolicyConfig policy)
+    {
+        // MEAL-03 (docs/policy.md): a receipt that is alcohol-only (every line item reads
+        // as alcohol) is not reimbursable. Escalated rather than auto-rejected — the
+        // keyword signal can misfire, so a human keeps the final say on money leaving the
+        // door, consistent with this engine never guessing in the risky direction (M12/M15).
+        if (invoice.LineItems is { Count: > 0 } && invoice.LineItems.All(IsAlcoholLineItem))
+            return RouterDecision.Escalated("Alcohol-only receipts are not reimbursable (MEAL-03).");
+
+        // MEAL-01: ordinary personal meals use the flat per-submission ceiling.
+        if (!invoice.IsClientEntertainment)
+            return EvaluateFlat(invoice, policy, "Meals");
+
+        // MEAL-02: client entertainment is a distinct sub-case with its own (higher)
+        // ceiling. Above the justification threshold it additionally needs both a business
+        // justification and a client name, or it is a hard stop regardless of amount.
+        var justificationThreshold = policy.ClientEntertainmentJustificationThreshold ?? 0m;
+        if (invoice.TotalAmount > justificationThreshold &&
+            (string.IsNullOrWhiteSpace(invoice.BusinessJustification) || string.IsNullOrWhiteSpace(invoice.ClientName)))
+            return RouterDecision.Escalated($"Client entertainment over {justificationThreshold:C} requires both a business justification and a client name (MEAL-02).");
+
+        var ceiling = policy.ClientEntertainmentMaxAmount ?? 0m;
+        if (invoice.TotalAmount > ceiling)
+            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the client entertainment ceiling of {ceiling:C}.");
+
+        return RouterDecision.Approved($"Client entertainment within the {ceiling:C} ceiling.");
+    }
+
+    private static bool IsAlcoholLineItem(LineItem item)
+        => AlcoholKeywords.Any(keyword => item.Description.Contains(keyword, StringComparison.OrdinalIgnoreCase));
 
     private static RouterDecision EvaluateFlat(InvoicePayload invoice, PolicyConfig policy, string category)
     {
@@ -81,23 +156,16 @@ public class PolicyEngine
         return RouterDecision.Approved($"Within the {category} ceiling of {policy.MaxAmount:C}.");
     }
 
-    private static RouterDecision EvaluateMeals(InvoicePayload invoice, AiAnalysisResult aiResult, PolicyConfig policy)
-    {
-        if (aiResult.MealAttendeesCount <= 0)
-            return RouterDecision.Escalated("Meals category requires a verified attendee count.");
-
-        var perAttendee = policy.PerAttendeeAmount ?? 0m;
-        var ceiling = perAttendee * aiResult.MealAttendeesCount;
-        if (invoice.TotalAmount > ceiling)
-            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds {perAttendee:C} x {aiResult.MealAttendeesCount} attendees ({ceiling:C}).");
-
-        return RouterDecision.Approved($"Within the Meals ceiling of {perAttendee:C}/attendee ({ceiling:C} for {aiResult.MealAttendeesCount} attendees).");
-    }
-
     private async Task<RouterDecision> EvaluateTravelAsync(InvoicePayload invoice, AiAnalysisResult aiResult, PolicyConfig policy)
     {
         if (string.IsNullOrWhiteSpace(aiResult.LinkedTripId))
             return RouterDecision.Escalated("Travel category requires a valid TripId.");
+
+        // TRAVEL-03: first/business-class is always human, regardless of amount — checked
+        // before the per-diem/trip-cap math so a small first-class fare can't sneak through
+        // just because it happens to be under the daily allowance.
+        if (invoice.IsPremiumTravel)
+            return RouterDecision.Escalated("First/business-class travel always requires manager approval (TRAVEL-03).");
 
         var perDiem = policy.PerDiem ?? 0m;
         if (invoice.TotalAmount > perDiem)
@@ -115,26 +183,4 @@ public class PolicyEngine
         await _daprClient.SaveStateAsync(StateStoreName, tripKey, newTotal);
         return RouterDecision.Approved($"Within the {perDiem:C}/day allowance; trip {aiResult.LinkedTripId} now at {newTotal:C} of {tripCap:C}.");
     }
-}
-
-public class PolicyConfig
-{
-    /// <summary>Flat ceiling, used by every category except Meals and Travel.</summary>
-    public decimal MaxAmount { get; set; }
-    public double? MinConfidence { get; set; }
-
-    /// <summary>Meals only: ceiling = PerAttendeeAmount * AiAnalysisResult.MealAttendeesCount.</summary>
-    public decimal? PerAttendeeAmount { get; set; }
-
-    /// <summary>Travel only: cumulative cap per TripId, tracked in the Dapr state store.</summary>
-    public decimal? TripCap { get; set; }
-
-    /// <summary>Travel only: per-invoice daily allowance.</summary>
-    public decimal? PerDiem { get; set; }
-}
-
-public class GlobalGuardrailsConfig
-{
-    public decimal RiskThreshold { get; set; } = 5000m;
-    public double DefaultMinConfidence { get; set; } = 0.80;
 }

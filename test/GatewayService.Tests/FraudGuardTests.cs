@@ -1,67 +1,51 @@
-using Dapr.Client;
-using Moq;
 using Xunit;
 
 public class FraudGuardTests
 {
+    private static readonly IReadOnlySet<string> KnownVendors =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "CloudSoft Inc", "The Corner Bistro" };
+
     [Fact]
-    public async Task FirstSubmission_IsNotADuplicate_AndGetsRecorded()
+    public void RoundNumber_ToUnknownVendor_IsSuspicious()
     {
-        var daprMock = new Mock<DaprClient>();
-        daprMock.Setup(c => c.GetStateAndETagAsync<DateTimeOffset?>("statestore", It.IsAny<string>(), null, null, default))
-            .ReturnsAsync(((DateTimeOffset?)null, ""));
-
-        var now = DateTimeOffset.UtcNow;
-        var result = await FraudGuard.IsLikelyDuplicateAsync(daprMock.Object, "statestore", "ACME Corp", 500m, now);
-
-        Assert.False(result);
-        daprMock.Verify(c => c.TrySaveStateAsync("statestore", FraudGuard.BuildKey("ACME Corp", 500m), now, "", null, null, default), Times.Once);
+        Assert.True(FraudGuard.IsLikelySuspicious("Shady Consulting LLC", 500m, KnownVendors));
     }
 
     [Fact]
-    public async Task SameVendorAndAmount_WithinWindow_IsBlocked()
+    public void RoundNumber_ToKnownVendor_IsNotSuspicious()
     {
-        var daprMock = new Mock<DaprClient>();
-        var thirtyMinutesAgo = DateTimeOffset.UtcNow.AddMinutes(-30);
-        daprMock.Setup(c => c.GetStateAndETagAsync<DateTimeOffset?>("statestore", It.IsAny<string>(), null, null, default))
-            .ReturnsAsync(((DateTimeOffset?)thirtyMinutesAgo, "etag-1"));
-
-        var result = await FraudGuard.IsLikelyDuplicateAsync(daprMock.Object, "statestore", "ACME Corp", 500m, DateTimeOffset.UtcNow);
-
-        Assert.True(result);
-        daprMock.Verify(c => c.TrySaveStateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string>(), null, null, default), Times.Never);
+        Assert.False(FraudGuard.IsLikelySuspicious("CloudSoft Inc", 500m, KnownVendors));
     }
 
     [Fact]
-    public async Task SameVendorAndAmount_OutsideWindow_IsAllowed_AndRefreshesTheTimestamp()
+    public void NonRoundNumber_ToUnknownVendor_IsNotSuspicious()
     {
-        var daprMock = new Mock<DaprClient>();
-        var twentyFiveHoursAgo = DateTimeOffset.UtcNow.AddHours(-25);
-        daprMock.Setup(c => c.GetStateAndETagAsync<DateTimeOffset?>("statestore", It.IsAny<string>(), null, null, default))
-            .ReturnsAsync(((DateTimeOffset?)twentyFiveHoursAgo, "etag-1"));
-
-        var now = DateTimeOffset.UtcNow;
-        var result = await FraudGuard.IsLikelyDuplicateAsync(daprMock.Object, "statestore", "ACME Corp", 500m, now);
-
-        Assert.False(result);
-        daprMock.Verify(c => c.TrySaveStateAsync("statestore", FraudGuard.BuildKey("ACME Corp", 500m), now, "etag-1", null, null, default), Times.Once);
+        Assert.False(FraudGuard.IsLikelySuspicious("Shady Consulting LLC", 499.99m, KnownVendors));
     }
 
     [Fact]
-    public void BuildKey_IsCaseAndWhitespaceInsensitiveOnVendor()
+    public void KnownVendorMatch_IsCaseAndWhitespaceInsensitive()
     {
-        var key1 = FraudGuard.BuildKey("  ACME Corp  ", 500m);
-        var key2 = FraudGuard.BuildKey("acme corp", 500.00m);
-
-        Assert.Equal(key1, key2);
+        Assert.False(FraudGuard.IsLikelySuspicious("  cloudsoft inc  ", 500m, KnownVendors));
     }
 
     [Fact]
-    public void BuildKey_DifferentAmounts_ProduceDifferentKeys()
+    public void TwoDifferentSubmitters_SameKnownVendorAndAmount_NeitherIsSuspicious()
     {
-        var key1 = FraudGuard.BuildKey("ACME Corp", 500m);
-        var key2 = FraudGuard.BuildKey("ACME Corp", 501m);
+        // The old vendor+amount+24h heuristic used to block the second of these — a real
+        // false positive (two coworkers lunching at the same place for the same price).
+        // The signal is now evaluated per-submission, so neither one trips it.
+        Assert.False(FraudGuard.IsLikelySuspicious("The Corner Bistro", 18m, KnownVendors));
+        Assert.False(FraudGuard.IsLikelySuspicious("The Corner Bistro", 18m, KnownVendors));
+    }
 
-        Assert.NotEqual(key1, key2);
+    [Theory]
+    [InlineData(100, true)]
+    [InlineData(250, true)]
+    [InlineData(100.50, false)]
+    [InlineData(0.99, false)]
+    public void IsRoundNumber_HasNoFractionalCents(decimal amount, bool expected)
+    {
+        Assert.Equal(expected, FraudGuard.IsRoundNumber(amount));
     }
 }

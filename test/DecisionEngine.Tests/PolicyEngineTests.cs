@@ -11,12 +11,15 @@ public class PolicyEngineTests
         {
             ["GlobalGuardrails:RiskThreshold"] = "5000",
             ["GlobalGuardrails:DefaultMinConfidence"] = "0.80",
+            ["GlobalGuardrails:FxMaxAmount"] = "1000",
 
             ["ExpensePolicies:SaaS:MaxAmount"] = "500",
             ["ExpensePolicies:SaaS:MinConfidence"] = "0.80",
 
-            ["ExpensePolicies:Meals:PerAttendeeAmount"] = "75",
+            ["ExpensePolicies:Meals:MaxAmount"] = "75",
             ["ExpensePolicies:Meals:MinConfidence"] = "0.90",
+            ["ExpensePolicies:Meals:ClientEntertainmentMaxAmount"] = "800",
+            ["ExpensePolicies:Meals:ClientEntertainmentJustificationThreshold"] = "500",
 
             ["ExpensePolicies:Travel:TripCap"] = "2000",
             ["ExpensePolicies:Travel:PerDiem"] = "200",
@@ -24,22 +27,30 @@ public class PolicyEngineTests
 
             ["ExpensePolicies:Other:MaxAmount"] = "100",
             ["ExpensePolicies:Other:MinConfidence"] = "0.80",
+
+            // "ACME" is the default vendor Invoice() below uses, so GLOBAL-VENDOR doesn't
+            // escalate every test that isn't specifically exercising it.
+            ["VendorDirectory:ACME"] = "Other",
         })
         .Build();
 
+    // GLOBAL-RECEIPT requires an itemized breakdown above $25; auto-filling one that sums
+    // exactly to `amount` keeps these tests focused on the thing they're actually testing
+    // (category ceilings, confidence, etc.) instead of also having to think about receipts.
+    // Tests that specifically exercise GLOBAL-RECEIPT/GLOBAL-MATH build their own invoice.
     private static InvoicePayload Invoice(decimal amount, string vendor = "ACME", string category = "") => new()
     {
         TrackingId = Guid.NewGuid().ToString(),
         Vendor = vendor,
         TotalAmount = amount,
-        Category = category
+        Category = category,
+        LineItems = amount > 25m ? [new LineItem("Test line item", amount)] : null
     };
 
-    private static AiAnalysisResult Ai(string category, double confidence = 0.95, int attendees = 0, string? tripId = null) => new()
+    private static AiAnalysisResult Ai(string category, double confidence = 0.95, string? tripId = null) => new()
     {
         SuggestedCategory = category,
         ConfidenceScore = confidence,
-        MealAttendeesCount = attendees,
         LinkedTripId = tripId
     };
 
@@ -65,11 +76,11 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public void TryFastRejectOnRiskThreshold_OverThreshold_ReturnsEscalatedWithoutAi()
+    public void TryFastRejectOnGlobalGuardrails_OverThreshold_ReturnsEscalatedWithoutAi()
     {
         var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
 
-        var result = engine.TryFastRejectOnRiskThreshold(Invoice(5001m));
+        var result = engine.TryFastRejectOnGlobalGuardrails(Invoice(5001m));
 
         Assert.NotNull(result);
         Assert.False(result!.IsApproved);
@@ -77,13 +88,141 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public void TryFastRejectOnRiskThreshold_UnderThreshold_ReturnsNull()
+    public void TryFastRejectOnGlobalGuardrails_UnderThresholdWithReceipt_ReturnsNull()
     {
         var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
 
-        var result = engine.TryFastRejectOnRiskThreshold(Invoice(350m));
+        var result = engine.TryFastRejectOnGlobalGuardrails(Invoice(350m));
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_OverReceiptThreshold_MissingLineItems_IsEscalated()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T1", Vendor = "ACME", TotalAmount = 100m, LineItems = null };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.NotNull(result);
+        Assert.False(result!.IsApproved);
+        Assert.Contains("GLOBAL-RECEIPT", result.Reason);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_LineItemsDontMatchTotal_IsEscalated()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload
+        {
+            TrackingId = "T2",
+            Vendor = "ACME",
+            TotalAmount = 100m,
+            LineItems = [new LineItem("Widget", 50m), new LineItem("Gadget", 20m)] // sums to 70, off by 30
+        };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.NotNull(result);
+        Assert.False(result!.IsApproved);
+        Assert.Contains("GLOBAL-MATH", result.Reason);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_LineItemsWithinTolerance_ReturnsNull()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        // 2% of 100 = 2.00, capped at $10 -> tolerance is $2. Off by $1.50 is within it.
+        var invoice = new InvoicePayload
+        {
+            TrackingId = "T3",
+            Vendor = "ACME",
+            TotalAmount = 100m,
+            LineItems = [new LineItem("Widget", 98.50m)]
+        };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_AtOrBelowReceiptThreshold_NoLineItemsNeeded()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T4", Vendor = "ACME", TotalAmount = 25m, LineItems = null };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_UnknownVendor_IsEscalated_RegardlessOfAmount()
+    {
+        // GLOBAL-VENDOR (docs/policy.md): a vendor never seen before is always human
+        // review, no matter how small or otherwise policy-compliant the amount is.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T5", Vendor = "Shady Consulting LLC", TotalAmount = 10m };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.NotNull(result);
+        Assert.False(result!.IsApproved);
+        Assert.Contains("GLOBAL-VENDOR", result.Reason);
+    }
+
+    [Fact]
+    public async Task UnknownVendor_IsEscalated_EvenAtHighConfidenceAndWithinCeiling()
+    {
+        // M12-style guarantee for GLOBAL-VENDOR: a confident AI classification within the
+        // category ceiling still cannot get an unrecognized vendor auto-approved.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+
+        var result = await engine.EvaluateAsync(Invoice(50m, vendor: "Shady Consulting LLC"), Ai("SaaS", confidence: 0.99));
+
+        Assert.False(result.IsApproved);
+        Assert.Contains("GLOBAL-VENDOR", result.Reason);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_FxOverLimit_IsEscalated()
+    {
+        // GLOBAL-VENDOR is unrelated to this check but must not fire first for this test's
+        // vendor, so use the known "ACME" default.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T6", Vendor = "ACME", TotalAmount = 1200m, Currency = "EUR", LineItems = [new LineItem("Equipment", 1200m)] };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.NotNull(result);
+        Assert.False(result!.IsApproved);
+        Assert.Contains("GLOBAL-FX", result.Reason);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_FxUnderLimit_ReturnsNull()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T7", Vendor = "ACME", TotalAmount = 500m, Currency = "EUR", LineItems = [new LineItem("Equipment", 500m)] };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryFastRejectOnGlobalGuardrails_UsdCurrency_IsNotTreatedAsFx()
+    {
+        // Explicitly marking "USD" must not be treated as foreign — same as leaving it null.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = new InvoicePayload { TrackingId = "T8", Vendor = "ACME", TotalAmount = 1200m, Currency = "USD" };
+
+        var result = engine.TryFastRejectOnGlobalGuardrails(invoice);
+
+        Assert.NotNull(result); // still escalates, but on GLOBAL-RECEIPT (no line items), not GLOBAL-FX
+        Assert.DoesNotContain("GLOBAL-FX", result!.Reason);
     }
 
     [Fact]
@@ -123,27 +262,111 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public async Task Meals_UsesPerAttendeeFormula_NotAFlatAmount()
+    public async Task Meals_WithinFlatCeiling_IsApproved()
     {
+        // MEAL-01: $75 flat per submission — each person expenses their own meal
+        // separately, so there is no attendee count to multiply by.
         var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
 
-        // $75/attendee x 3 = $225 ceiling.
-        var withinFormula = await engine.EvaluateAsync(Invoice(220m), Ai("Meals", confidence: 0.95, attendees: 3));
-        var overFormula = await engine.EvaluateAsync(Invoice(230m), Ai("Meals", confidence: 0.95, attendees: 3));
+        var result = await engine.EvaluateAsync(Invoice(70m), Ai("Meals"));
 
-        Assert.True(withinFormula.IsApproved);
-        Assert.False(overFormula.IsApproved);
+        Assert.True(result.IsApproved);
     }
 
     [Fact]
-    public async Task Meals_MissingAttendeeCount_IsEscalated()
+    public async Task Meals_OverFlatCeiling_IsEscalated()
     {
         var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
 
-        var result = await engine.EvaluateAsync(Invoice(50m), Ai("Meals", confidence: 0.95, attendees: 0));
+        var result = await engine.EvaluateAsync(Invoice(80m), Ai("Meals"));
 
         Assert.False(result.IsApproved);
-        Assert.Contains("attendee", result.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Meals ceiling", result.Reason);
+    }
+
+    [Fact]
+    public async Task Meals_AlcoholOnlyLineItems_IsEscalated_RegardlessOfAmount()
+    {
+        // MEAL-03: not reimbursable, checked before either the personal or client
+        // entertainment branch, so it applies to both.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(40m);
+        invoice.LineItems = [new LineItem("Bottle of wine", 40m)];
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.False(result.IsApproved);
+        Assert.Contains("MEAL-03", result.Reason);
+    }
+
+    [Fact]
+    public async Task Meals_MixedAlcoholAndFoodLineItems_IsNotBlockedByMeal03()
+    {
+        // Only an *alcohol-only* receipt trips MEAL-03 — a dinner that happens to include
+        // a glass of wine alongside food is an ordinary meal.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(70m);
+        invoice.LineItems = [new LineItem("Glass of wine", 20m), new LineItem("Steak dinner", 50m)];
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.True(result.IsApproved);
+    }
+
+    [Fact]
+    public async Task ClientEntertainment_UnderJustificationThreshold_NeedsNoExtraInfo()
+    {
+        // MEAL-02's justification+client-name requirement only kicks in above $500.
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(300m);
+        invoice.IsClientEntertainment = true;
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.True(result.IsApproved);
+    }
+
+    [Fact]
+    public async Task ClientEntertainment_OverThreshold_MissingJustificationOrClientName_IsEscalated()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(600m);
+        invoice.IsClientEntertainment = true;
+        invoice.ClientName = "Northwind Corp"; // justification still missing
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.False(result.IsApproved);
+        Assert.Contains("MEAL-02", result.Reason);
+    }
+
+    [Fact]
+    public async Task ClientEntertainment_OverThreshold_WithJustificationAndClientName_IsApproved()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(600m);
+        invoice.IsClientEntertainment = true;
+        invoice.BusinessJustification = "Contract renewal dinner";
+        invoice.ClientName = "Northwind Corp";
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.True(result.IsApproved);
+    }
+
+    [Fact]
+    public async Task ClientEntertainment_OverOwnCeiling_IsEscalated_EvenWithJustification()
+    {
+        var engine = new PolicyEngine(BuildConfig(), Mock.Of<DaprClient>());
+        var invoice = Invoice(900m);
+        invoice.IsClientEntertainment = true;
+        invoice.BusinessJustification = "Annual client gala";
+        invoice.ClientName = "Northwind Corp";
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Meals"));
+
+        Assert.False(result.IsApproved);
+        Assert.Contains("client entertainment ceiling", result.Reason);
     }
 
     [Fact]
@@ -214,6 +437,28 @@ public class PolicyEngineTests
 
         Assert.False(result.IsApproved);
         Assert.Contains("daily travel allowance", result.Reason);
+    }
+
+    [Fact]
+    public async Task Travel_PremiumClass_IsEscalated_EvenWithinPerDiem()
+    {
+        // TRAVEL-03: first/business-class is always human, regardless of amount — checked
+        // before the per-diem math, so a cheap first-class fare can't sneak through.
+        var daprMock = new Mock<DaprClient>();
+        daprMock.Setup(c => c.GetStateAsync<decimal?>("statestore", "trip-TRIP-4-total", null, null, default))
+            .ReturnsAsync(0m);
+
+        var engine = new PolicyEngine(BuildConfig(), daprMock.Object);
+        var invoice = Invoice(50m); // well within the $200 per-diem
+        invoice.IsPremiumTravel = true;
+
+        var result = await engine.EvaluateAsync(invoice, Ai("Travel", confidence: 0.95, tripId: "TRIP-4"));
+
+        Assert.False(result.IsApproved);
+        Assert.Contains("TRAVEL-03", result.Reason);
+        daprMock.Verify(
+            c => c.SaveStateAsync("statestore", "trip-TRIP-4-total", It.IsAny<decimal?>(), null, null, default),
+            Times.Never);
     }
 
     [Fact]

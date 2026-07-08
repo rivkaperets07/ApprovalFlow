@@ -23,6 +23,7 @@
         .badge-Approved { background: #28a745; }
         .badge-Escalated { background: #d39e00; }
         .badge-Rejected { background: #dc3545; }
+        .badge-Duplicate { background: #7a3ea1; }
         .badge-Paid { background: #28a745; }
         .badge-Failed { background: #dc3545; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9em; }
@@ -32,6 +33,15 @@
         .stat-box { background: #f4f7f6; border-radius: 6px; padding: 10px 12px; }
         .stat-box .n { font-size: 1.4em; font-weight: 700; }
         .stat-box .l { font-size: 0.8em; color: #666; }
+        .conditional-field { display: none; background: #f0f6ff; border-radius: 6px; padding: 10px 12px; margin-top: 10px; }
+        .conditional-field.visible { display: block; }
+        .conditional-field label { margin-top: 0; }
+        .line-items-hint { font-size: 0.8em; color: #888; margin: 4px 0 0; }
+        .line-items-hint.warn { color: #b8791c; font-weight: 600; }
+        .line-item-row { display: grid; grid-template-columns: 1fr 110px 32px; gap: 6px; margin-top: 6px; align-items: center; }
+        .line-item-row input { margin-top: 0; }
+        .line-item-remove { background: #dc3545; color: white; border: none; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; margin-top: 0; padding: 0; }
+        .btn-add-line { background: #0066cc; margin-top: 8px; padding: 6px 14px; font-size: 0.85em; }
     </style>
 </head>
 <body>
@@ -46,12 +56,44 @@
             <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
             <datalist id="knownVendors"></datalist>
             <p style="color:#888; font-size:0.8em; margin:4px 0 0;">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
-            <label>Total Amount</label>
+            <label>Invoice Number <span style="color:#888; font-weight:400;">(optional)</span></label>
+            <input id="invoiceNumber" placeholder="e.g., INV-4471" />
+            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">If given, a repeat of this Vendor + Invoice Number + Amount is rejected as a duplicate (GLOBAL-DUP).</p>
+            <label>Total Amount (already converted to USD)</label>
             <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
+            <label>Original currency <span style="color:#888; font-weight:400;">(leave blank/USD for domestic spend)</span></label>
+            <input id="currency" placeholder="e.g., EUR, GBP — blank means USD" />
+            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Foreign-currency items over $1,000 are always human-reviewed (GLOBAL-FX).</p>
             <label>Category (your own label — a hint, not the final word)</label>
             <input id="category" placeholder="e.g., SaaS, Meals, Travel..." />
+
+            <div id="mealsField" class="conditional-field">
+                <label><input type="checkbox" id="isClientEntertainment" style="width:auto; margin-right:6px;" />This is client entertainment</label>
+                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Personal meals auto-approve up to $75. Client entertainment has its own $800 ceiling, but over $500 needs a business justification and client name below (MEAL-02).</p>
+                <div id="clientEntertainmentFields" style="display:none; margin-top:8px;">
+                    <label>Business justification</label>
+                    <input id="businessJustification" placeholder="e.g., Contract renewal dinner" />
+                    <label>Client name</label>
+                    <input id="clientName" placeholder="e.g., Northwind Corp" />
+                </div>
+            </div>
+
+            <div id="travelField" class="conditional-field">
+                <label>Trip ID</label>
+                <input id="tripId" placeholder="e.g., TRIP-42" />
+                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Travel expenses accumulate against this Trip ID's $2,000 cap.</p>
+                <label style="margin-top:10px;"><input type="checkbox" id="isPremiumTravel" style="width:auto; margin-right:6px;" />First/business class</label>
+                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Always requires manager approval, regardless of amount (TRAVEL-03).</p>
+            </div>
+
             <label>Notes</label>
             <textarea id="description" rows="2"></textarea>
+
+            <label>Itemized breakdown <span id="lineItemsRequired" style="display:none; color:#b8791c;">(required over $25)</span></label>
+            <div id="lineItemsContainer"></div>
+            <button type="button" id="addLineItemBtn" class="btn-add-line">+ Add line item</button>
+            <p id="lineItemsHint" class="line-items-hint">No line items yet.</p>
+
             <button type="submit" class="btn-submit">Submit Invoice</button>
         </form>
         <div id="submitStatus" class="status-card" style="display:none;"></div>
@@ -136,20 +178,108 @@
             `;
         }
 
+        // --- Category-driven conditional fields (Meals entertainment / Travel TripId) ---
+        function updateCategoryHints() {
+            const category = document.getElementById('category').value.toLowerCase();
+            document.getElementById('mealsField').classList.toggle('visible', category.includes('meal'));
+            document.getElementById('travelField').classList.toggle('visible', category.includes('travel'));
+        }
+        document.getElementById('category').addEventListener('input', updateCategoryHints);
+
+        document.getElementById('isClientEntertainment').addEventListener('change', (e) => {
+            document.getElementById('clientEntertainmentFields').style.display = e.target.checked ? 'block' : 'none';
+        });
+
+        // --- Line items (GLOBAL-RECEIPT / GLOBAL-MATH: no OCR, the submitter provides
+        // the itemized breakdown directly instead of the AI guessing it) ---
+        function addLineItemRow(description = '', amount = '') {
+            const container = document.getElementById('lineItemsContainer');
+            const row = document.createElement('div');
+            row.className = 'line-item-row';
+            row.innerHTML = `
+                <input type="text" class="line-item-desc" placeholder="Description" value="${description}" />
+                <input type="number" step="0.01" class="line-item-amount" placeholder="0.00" value="${amount}" />
+                <button type="button" class="line-item-remove" title="Remove">×</button>
+            `;
+            row.querySelector('.line-item-remove').addEventListener('click', () => {
+                row.remove();
+                updateLineItemsHint();
+            });
+            row.querySelectorAll('input').forEach(input => input.addEventListener('input', updateLineItemsHint));
+            container.appendChild(row);
+            updateLineItemsHint();
+        }
+        document.getElementById('addLineItemBtn').addEventListener('click', () => addLineItemRow());
+
+        function collectLineItems() {
+            return Array.from(document.querySelectorAll('.line-item-row')).map(row => ({
+                Description: row.querySelector('.line-item-desc').value,
+                Amount: parseFloat(row.querySelector('.line-item-amount').value) || 0
+            })).filter(item => item.Description || item.Amount);
+        }
+
+        function updateLineItemsHint() {
+            const hint = document.getElementById('lineItemsHint');
+            const requiredTag = document.getElementById('lineItemsRequired');
+            const total = parseFloat(document.getElementById('totalAmount').value) || 0;
+            const items = collectLineItems();
+            const itemsSum = items.reduce((sum, i) => sum + i.Amount, 0);
+
+            requiredTag.style.display = total > 25 ? 'inline' : 'none';
+
+            if (items.length === 0) {
+                hint.textContent = total > 25
+                    ? 'No line items yet — required for amounts over $25 (GLOBAL-RECEIPT), or this will be escalated.'
+                    : 'No line items yet (optional under $25).';
+                hint.classList.toggle('warn', total > 25);
+                return;
+            }
+
+            const tolerance = Math.min(total * 0.02, 10);
+            const variance = Math.abs(total - itemsSum);
+            const withinTolerance = variance <= tolerance;
+            hint.textContent = `Line items total $${itemsSum.toFixed(2)} vs. invoice total $${total.toFixed(2)}` +
+                (withinTolerance ? ' — OK.' : ` — off by $${variance.toFixed(2)} (allowed: $${tolerance.toFixed(2)}, GLOBAL-MATH).`);
+            hint.classList.toggle('warn', !withinTolerance);
+        }
+        document.getElementById('totalAmount').addEventListener('input', updateLineItemsHint);
+
         // --- Submit + auto-poll ---------------------------------------------
         document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const submitBtn = e.target.querySelector('.btn-submit');
+            if (submitBtn.disabled) return; // a submit for this click is already in flight
+
+            const tripIdValue = document.getElementById('tripId').value;
+            const isClientEntertainment = document.getElementById('isClientEntertainment').checked;
             const payload = {
                 Vendor: document.getElementById('vendor').value,
+                InvoiceNumber: document.getElementById('invoiceNumber').value || null,
                 TotalAmount: parseFloat(document.getElementById('totalAmount').value),
                 Category: document.getElementById('category').value,
-                Notes: document.getElementById('description').value
+                Notes: document.getElementById('description').value,
+                Currency: document.getElementById('currency').value || null,
+                TripId: tripIdValue || null,
+                IsPremiumTravel: document.getElementById('isPremiumTravel').checked,
+                IsClientEntertainment: isClientEntertainment,
+                BusinessJustification: isClientEntertainment ? (document.getElementById('businessJustification').value || null) : null,
+                ClientName: isClientEntertainment ? (document.getElementById('clientName').value || null) : null,
+                LineItems: collectLineItems()
             };
             const statusBox = document.getElementById('submitStatus');
             statusBox.style.display = 'block';
             statusBox.textContent = 'Submitting...';
 
-            const submitResult = await callApi('submit', 'POST', payload);
+            // Only guard the POST itself — an accidental double-click could fire it twice
+            // (F3). Re-enable right after so the submitter can immediately start a
+            // separate, unrelated expense without waiting for this one's status polling.
+            submitBtn.disabled = true;
+            let submitResult;
+            try {
+                submitResult = await callApi('submit', 'POST', payload);
+            } finally {
+                submitBtn.disabled = false;
+            }
             if (!submitResult.ok || !submitResult.data?.trackingId) {
                 statusBox.textContent = `Error: HTTP ${submitResult.status}`;
                 return;
@@ -262,6 +392,7 @@
                 ['Human-approved', data.humanApproved],
                 ['Escalated (pending)', data.escalatedPending],
                 ['Rejected', data.rejected],
+                ['Duplicate (rejected)', data.duplicateRejected],
                 ['Auto-approval rate', `${Math.round((data.autoApprovalRate ?? 0) * 100)}%`],
                 ['$ auto-approved', data.autoApprovedAmount],
                 ['$ human-approved', data.humanApprovedAmount],
@@ -276,6 +407,7 @@
         loadEscalations();
         loadStats();
         loadVendors();
+        updateLineItemsHint();
     </script>
 </body>
 </html>

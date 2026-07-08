@@ -78,24 +78,12 @@ public class StubAiModelProvider : IAiModelProvider
             Reasoning = $"Stub classification: {reasoning}"
         };
 
-        switch (category)
+        if (category == "Travel")
         {
-            case "Meals":
-                result.MealAttendeesCount = ExtractAttendeeCount(invoice.Notes) ?? 1;
-                break;
-            case "Travel":
-                result.LinkedTripId = ExtractTripId(invoice.Notes) ?? $"TRIP-{invoice.TrackingId}";
-                break;
+            result.LinkedTripId = ExtractTripId(invoice.Notes) ?? $"TRIP-{invoice.TrackingId}";
         }
 
         return Task.FromResult(result);
-    }
-
-    private static int? ExtractAttendeeCount(string? notes)
-    {
-        if (string.IsNullOrWhiteSpace(notes)) return null;
-        var match = Regex.Match(notes, @"(\d+)\s*attendee", RegexOptions.IgnoreCase);
-        return match.Success ? int.Parse(match.Groups[1].Value) : null;
     }
 
     private static string? ExtractTripId(string? notes)

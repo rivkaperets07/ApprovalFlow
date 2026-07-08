@@ -1,15 +1,19 @@
 {
   "GlobalGuardrails": {
     "RiskThreshold": 5000,
-    "DefaultMinConfidence": 0.80
+    "DefaultMinConfidence": 0.80,
+    "ReceiptRequiredAbove": 25,
+    "MathToleranceFraction": 0.02,
+    "MathToleranceCap": 10,
+    "FxMaxAmount": 1000
   },
   "ExpensePolicies": {
     "SaaS": {
-      "MaxAmount": 500,
+      "MaxAmount": 200,
       "MinConfidence": 0.80
     },
     "Hardware": {
-      "MaxAmount": 250,
+      "MaxAmount": 1000,
       "MinConfidence": 0.85
     },
     "OfficeSupplies": {
@@ -21,8 +25,10 @@
       "MinConfidence": 0.85
     },
     "Meals": {
-      "PerAttendeeAmount": 75,
-      "MinConfidence": 0.90
+      "MaxAmount": 75,
+      "MinConfidence": 0.90,
+      "ClientEntertainmentMaxAmount": 800,
+      "ClientEntertainmentJustificationThreshold": 500
     },
     "Travel": {
       "TripCap": 2000,

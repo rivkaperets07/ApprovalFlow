@@ -156,11 +156,11 @@ is classification and extraction only; it must not be able to talk its way past 
   It reads `Policies/policies.json` (bind-mounted, not baked into the image — see below)
   and evaluates, in order: (1) a flat `RiskThreshold` ($5000) that applies regardless of
   category, so a misclassified/gamed category can't dodge it; (2) a per-category minimum
-  confidence; (3) the category rule itself — flat ceilings for most categories, an
-  explicit `$75 × attendees` formula for Meals, and a Dapr-state-backed cumulative
-  `TripId` total + per-diem for Travel. Meals and Travel are hard-coded branches rather
-  than a generic rule DSL — with only two formula-based categories, a small expression
-  engine would be speculative complexity for no present benefit.
+  confidence; (3) the category rule itself — flat ceilings for every category (Meals
+  included: $75 per submission, since each person expenses their own meal separately) and
+  a Dapr-state-backed cumulative `TripId` total + per-diem for Travel. Travel is a
+  hard-coded branch rather than a generic rule DSL — with only one formula-based category,
+  a small expression engine would be speculative complexity for no present benefit.
 - **`IAiModelProvider` is an anti-corruption layer (M15).** `StubAiModelProvider` is a
   deterministic keyword classifier used by default and in CI/tests, so builds never
   depend on a live LLM or hit a rate limit. `GroqAiModelProvider` calls a free-tier LLM
@@ -182,6 +182,7 @@ is classification and extraction only; it must not be able to talk its way past 
   risk threshold is the backstop regardless of what category the AI picks.
 - **Positive:** Threshold changes (e.g. raising the SaaS ceiling) are a file edit and a
   few seconds' wait for `reloadOnChange`, not a container rebuild.
-- **Trade-off:** The `Other` fallback category and the Meals/Travel special cases mean a
-  brand-new category with its own formula still requires a code change, not just a config
-  change — accepted because the assignment's category list is fixed by `policy.md`.
+- **Trade-off:** The `Other` fallback category and Travel's cumulative-trip-cap special
+  case mean a brand-new category with its own formula still requires a code change, not
+  just a config change — accepted because the assignment's category list is fixed by
+  `policy.md`.
