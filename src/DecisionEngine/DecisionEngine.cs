@@ -20,6 +20,7 @@ CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);
+builder.Configuration.AddJsonFile("Ai/vendor-directory.json", optional: false, reloadOnChange: true);
 
 builder.Services.AddDaprClient();
 builder.Services.AddLogging();
@@ -77,6 +78,8 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
         try
         {
             var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
+            invoice.AiSuggestedCategory = aiResult.SuggestedCategory;
+            invoice.AiConfidence = aiResult.ConfidenceScore;
             decision = await policyEngine.EvaluateAsync(invoice, aiResult);
             decidedBy = DecidedBy.Ai;
         }
@@ -116,6 +119,18 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
     }
 
     return Results.Ok(decisionResult);
+});
+
+// Known vendors the Stub classifier can confidently map to a category, so a submitter
+// (or the UI) can see which names actually give the router a strong signal.
+app.MapGet("/vendors", (IConfiguration config) =>
+{
+    var vendors = config.GetSection("VendorDirectory").GetChildren()
+        .Select(entry => new { Vendor = entry.Key, Category = entry.Value })
+        .OrderBy(v => v.Vendor)
+        .ToList();
+
+    return Results.Ok(vendors);
 });
 
 app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger) =>
@@ -197,6 +212,12 @@ public class InvoicePayload
     public string? Status { get; set; }
     public string? Reason { get; set; }
     public string? DecidedBy { get; set; }
+
+    /// <summary>What the AI actually classified this as — distinct from Category above,
+    /// which is just whatever text the submitter typed and plays no role in the decision.
+    /// Null when the AI was never consulted (e.g. fast-rejected on the risk threshold).</summary>
+    public string? AiSuggestedCategory { get; set; }
+    public double? AiConfidence { get; set; }
 }
 
 public class DecisionResult

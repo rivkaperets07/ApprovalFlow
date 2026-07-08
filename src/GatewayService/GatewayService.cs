@@ -108,6 +108,24 @@ app.MapPost("/submit", async ([FromBody] InvoicePayload invoice, DaprClient dapr
     return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
 });
 
+// Proxies DecisionEngine's /vendors via Dapr's synchronous service invocation (M5's
+// remaining building block — everything else in this system talks pub/sub or state).
+// The sidecar handles service discovery/mTLS/retries; the Gateway never needs
+// DecisionEngine's network address, only its Dapr app-id.
+app.MapGet("/vendors", async (DaprClient daprClient, ILogger<Program> logger) =>
+{
+    try
+    {
+        var vendors = await daprClient.InvokeMethodAsync<List<VendorEntry>>(HttpMethod.Get, "decision-engine", "vendors");
+        return Results.Ok(vendors);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not reach DecisionEngine for the vendor directory.");
+        return Results.Ok(new List<VendorEntry>());
+    }
+});
+
 app.MapGet("/status/{trackingId}", async ([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger) =>
 {
     if (string.IsNullOrWhiteSpace(trackingId))
@@ -131,6 +149,8 @@ app.MapGet("/status/{trackingId}", async ([FromRoute] string trackingId, DaprCli
         invoice.Category,
         invoice.TotalAmount,
         invoice.DecidedBy,
+        invoice.AiSuggestedCategory,
+        invoice.AiConfidence,
         invoice.PaymentStatus,
         invoice.PaymentMessage,
         invoice.SubmittedAt
@@ -171,6 +191,8 @@ app.MapGet("/escalations", async (DaprClient daprClient) =>
                 invoice.TrackingId,
                 invoice.Vendor,
                 invoice.Category,
+                invoice.AiSuggestedCategory,
+                invoice.AiConfidence,
                 invoice.TotalAmount,
                 invoice.Reason
             });
@@ -319,6 +341,9 @@ public class DecisionResult
 /// <summary>Mirrors PaymentService's PaymentResult wire shape (TrackingId, Success, Message).</summary>
 public record PaymentResult(string TrackingId, bool Success, string Message);
 
+/// <summary>Mirrors DecisionEngine's GET /vendors response shape.</summary>
+public record VendorEntry(string Vendor, string Category);
+
 public static class InvoiceStatus
 {
     public const string Pending = "Pending";
@@ -340,4 +365,10 @@ public class InvoicePayload
     public string? PaymentStatus { get; set; }
     public string? PaymentMessage { get; set; }
     public DateTimeOffset? SubmittedAt { get; set; }
+
+    /// <summary>What the AI actually classified this as — distinct from Category above,
+    /// which is just whatever text the submitter typed and plays no role in the decision.
+    /// Null when the AI was never consulted (e.g. fast-rejected on the risk threshold).</summary>
+    public string? AiSuggestedCategory { get; set; }
+    public double? AiConfidence { get; set; }
 }

@@ -1,0 +1,28 @@
+{
+  "VendorDirectory": {
+    "CloudSoft Inc": "SaaS",
+    "Northwind Cloud Services": "SaaS",
+    "Slack Technologies": "SaaS",
+    "GitHub Inc": "SaaS",
+    "FailBank Payments Co": "SaaS",
+
+    "TechSource Hardware": "Hardware",
+    "Dell Technologies": "Hardware",
+    "Logitech": "Hardware",
+
+    "The Corner Bistro": "Meals",
+    "Downtown Catering Co": "Meals",
+
+    "Delta Airlines": "Travel",
+    "Marriott Hotels": "Travel",
+    "City Cab Co": "Travel",
+
+    "Acme Supplies": "OfficeSupplies",
+    "Office Depot": "OfficeSupplies",
+    "Staples": "OfficeSupplies",
+
+    "AdBoost Media": "Marketing",
+    "Meta Ads": "Marketing",
+    "Google Ads": "Marketing"
+  }
+}

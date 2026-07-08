@@ -43,16 +43,25 @@
 
         <form id="invoiceForm">
             <label>Vendor</label>
-            <input id="vendor" placeholder="e.g., ACME Corp" required />
+            <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
+            <datalist id="knownVendors"></datalist>
+            <p style="color:#888; font-size:0.8em; margin:4px 0 0;">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
             <label>Total Amount</label>
             <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
-            <label>Category</label>
+            <label>Category (your own label — a hint, not the final word)</label>
             <input id="category" placeholder="e.g., SaaS, Meals, Travel..." />
             <label>Notes</label>
             <textarea id="description" rows="2"></textarea>
             <button type="submit" class="btn-submit">Submit Invoice</button>
         </form>
         <div id="submitStatus" class="status-card" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+        <h2>Known Vendors</h2>
+        <p style="color:#666; font-size:0.9em; margin-top:0;">The router recognizes these by name with high confidence. Anything else is classified by keywords in the vendor/notes text instead — and if nothing matches, it defaults to a low-confidence "Other" that escalates rather than guesses.</p>
+        <button id="refreshVendorsBtn" class="btn-secondary">Refresh</button>
+        <div id="vendorsList"></div>
     </div>
 
     <div class="card">
@@ -111,12 +120,17 @@
 
         function renderStatusCard(container, invoice) {
             container.style.display = 'block';
+            const aiCategoryRow = invoice.aiSuggestedCategory
+                ? `<div class="status-row"><span>AI classified as</span><span>${invoice.aiSuggestedCategory} (confidence ${invoice.aiConfidence ?? '—'})</span></div>`
+                : `<div class="status-row"><span>AI classified as</span><span class="empty">AI was not consulted (e.g. blocked before or above the risk threshold)</span></div>`;
             container.innerHTML = `
                 <div class="status-row"><span>Tracking ID</span><span>${invoice.trackingId ?? ''}</span></div>
                 <div class="status-row"><span>Decision</span>${badge(invoice.status)}</div>
                 <div class="status-row"><span>Decided by</span><span>${invoice.decidedBy ?? '—'}</span></div>
                 <div class="status-row"><span>Reason</span><span>${invoice.reason ?? '—'}</span></div>
-                <div class="status-row"><span>Vendor / Category / Amount</span><span>${invoice.vendor ?? ''} / ${invoice.category ?? ''} / ${invoice.totalAmount ?? ''}</span></div>
+                <div class="status-row"><span>Vendor / Amount</span><span>${invoice.vendor ?? ''} / ${invoice.totalAmount ?? ''}</span></div>
+                <div class="status-row"><span>Category you entered</span><span>${invoice.category || '—'} <em style="color:#999;">(a label only, not what decided this)</em></span></div>
+                ${aiCategoryRow}
                 <div class="status-row"><span>Payment</span>${badge(invoice.paymentStatus)}</div>
                 ${invoice.paymentMessage ? `<div class="status-row"><span>Payment detail</span><span>${invoice.paymentMessage}</span></div>` : ''}
             `;
@@ -184,19 +198,40 @@
                 <tr>
                     <td>${item.trackingId}</td>
                     <td>${item.vendor}</td>
-                    <td>${item.category}</td>
+                    <td>${item.aiSuggestedCategory ?? '<span class="empty">n/a</span>'}${item.aiConfidence ? ` (${item.aiConfidence})` : ''}</td>
                     <td>${item.totalAmount}</td>
                     <td>${item.reason}</td>
                 </tr>
             `).join('');
             list.innerHTML = `
                 <table>
-                    <thead><tr><th>Tracking ID</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Reason</th></tr></thead>
+                    <thead><tr><th>Tracking ID</th><th>Vendor</th><th>AI Category (confidence)</th><th>Amount</th><th>Reason</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             `;
         }
         document.getElementById('refreshEscalationsBtn').addEventListener('click', loadEscalations);
+
+        // --- Known vendors ---------------------------------------------
+        async function loadVendors() {
+            const list = document.getElementById('vendorsList');
+            const datalist = document.getElementById('knownVendors');
+            const { ok, data } = await callApi('vendors');
+            if (!ok || !data || data.length === 0) {
+                list.innerHTML = '<p class="empty">No known vendors configured.</p>';
+                datalist.innerHTML = '';
+                return;
+            }
+            const rows = data.map(v => `<tr><td>${v.vendor}</td><td>${v.category}</td></tr>`).join('');
+            list.innerHTML = `
+                <table>
+                    <thead><tr><th>Vendor</th><th>Category</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+            datalist.innerHTML = data.map(v => `<option value="${v.vendor}"></option>`).join('');
+        }
+        document.getElementById('refreshVendorsBtn').addEventListener('click', loadVendors);
 
         // --- Manual approve/reject ---------------------------------------------
         document.getElementById('approveBtn').addEventListener('click', async () => {
@@ -240,6 +275,7 @@
         // Initial load
         loadEscalations();
         loadStats();
+        loadVendors();
     </script>
 </body>
 </html>
