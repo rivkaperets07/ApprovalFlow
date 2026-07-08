@@ -1,33 +1,60 @@
-# ZioNet Approval Flow
+# ApprovalFlow
 
-This project implements an invoice approval flow using .NET microservices and Dapr.
+An AI-assisted, microservice-based invoice/expense approval platform. The system ingests
+invoices, has an AI agent classify them against `docs/policy.md`, auto-approves the
+in-policy majority, and escalates the rest to a human — while a deterministic
+[`PolicyEngine`](src/DecisionEngine/Core/Logic/PolicyEngine.cs) guarantees the AI can
+never push a decision past the configured ceilings. Approved items flow through a
+Saga-based payment with compensation on failure. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system diagram, sequence diagram,
+and ADRs, and [`docs/policy.md`](docs/policy.md) for the expense policy being enforced.
 
-## Main structure
+## Technologies
 
-- `docker-compose.yml` - orchestrates Redis, Dapr placement, services and official sidecars.
-- `components/` - Dapr components for pub/sub and state store.
-- `src/GatewayService` - receives invoices, saves state and publishes events.
-- `src/DecisionEngine` - subscribes to `invoice.submitted`, auto-approves or escalates, and publishes decision events.
-- `src/PaymentService` - processes `invoice.approved` and simulates payment.
-- `src/UI` - static UI for submitting invoices and manual approve/reject actions.
+- **.NET 8** (C#, minimal APIs) for all four services.
+- **[Dapr](https://dapr.io)** as the distributed application runtime: pub/sub (Redis),
+  state store (Redis), and secrets (`secretstores.local.env`) — no infrastructure SDK is
+  referenced directly by application code.
+- **Redis** backs both the Dapr pub/sub and state store components.
+- **Groq** (free-tier LLM) or a deterministic stub behind `IAiModelProvider` for invoice
+  classification — swappable via config, no code change.
+- **Swashbuckle** (OpenAPI/Swagger UI) on every service.
+- **xUnit + Moq** for automated tests.
+- Plain HTML/JS for the UI — no frontend framework/build step.
+
+## Services
+
+| Service | Responsibility |
+| --- | --- |
+| `src/GatewayService` | Single external entry point (rate-limited). Accepts submissions, exposes status/escalations/stats, forwards manual approve/reject. |
+| `src/DecisionEngine` | Subscribes to `invoice.submitted`; calls the AI provider, then `PolicyEngine`, to auto-approve or escalate. |
+| `src/PaymentService` | Subscribes to `invoice.approved`; runs the reserve → transfer → compensate Saga with idempotent, race-free claiming. |
+| `src/UI` | Static page to submit invoices and drive manual approve/reject. |
 
 ## Requirements
 
-- Docker Desktop
-- Docker Compose
+- Docker Desktop + Docker Compose (WSL2 backend on Windows)
+- .NET 8 SDK (only needed to run tests locally outside Docker)
+
+## Configuration
+
+Copy `.env.example` to `.env` (same folder as `docker-compose.yml`) and adjust:
+
+```
+GROQ_API_KEY=        # only needed if AI_PROVIDER=Groq
+AI_PROVIDER=Stub      # "Stub" (deterministic, default) or "Groq" (free-tier LLM)
+```
+
+Expense policy thresholds live in `src/DecisionEngine/Policies/policies.json`, which is
+bind-mounted into the container (not baked into the image) — edit it and the running
+DecisionEngine picks up the change within seconds via `reloadOnChange`, no rebuild or
+redeploy required (F7, M13).
 
 ## How to run
 
 ```powershell
 cd C:\Users\rivka\ZioNet-ApprovalFlow
 docker compose up --build -d
-```
-
-## Check status
-
-Ensure all services are running:
-
-```powershell
 docker compose ps
 ```
 
@@ -37,30 +64,47 @@ Follow logs if needed:
 docker compose logs -f gateway gateway-sidecar decision-engine decision-engine-sidecar payment-service payment-service-sidecar
 ```
 
-## Quick test
+Open the UI at http://localhost:8080, or drive the API directly at http://localhost:5000
+(Swagger UI at http://localhost:5000/swagger).
 
-Submit a test invoice to the gateway:
-
-```powershell
-$body = '{"vendor":"ACME","category":"Office","totalAmount":500,"notes":"Test invoice"}'
-Invoke-RestMethod -Uri http://localhost:5000/submit -Method Post -ContentType 'application/json' -Body $body
-```
-
-Check its status:
+## Quick manual test
 
 ```powershell
-Invoke-RestMethod -Uri http://localhost:5000/status/<trackingId> -Method Get
+$body = '{"vendor":"CloudSoft Inc","category":"SaaS","totalAmount":350,"notes":"Monthly subscription for cloud-hosted software license."}'
+$submit = Invoke-RestMethod -Uri http://localhost:5000/submit -Method Post -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Uri "http://localhost:5000/status/$($submit.trackingId)" -Method Get
+Invoke-RestMethod -Uri http://localhost:5000/escalations -Method Get
+Invoke-RestMethod -Uri http://localhost:5000/stats -Method Get
 ```
 
-## UI
+## How to test
 
-Open in the browser:
+Unit tests (no Docker required):
 
-- http://localhost:8080
+```powershell
+dotnet test test/GatewayService.Tests
+dotnet test test/PaymentService.Tests
+dotnet test test/DecisionEngine.Tests
+```
+
+End-to-end verification of the four worked journeys (auto-approve, escalate-and-resume,
+duplicate, payment-failure-and-compensation) against a running `docker compose` stack,
+using the fixtures in `docs/sample-invoices.json`:
+
+```powershell
+docker compose up --build -d
+./scripts/verify.ps1
+```
+
+It prints a pass/fail line per journey plus the anti-cheese guards (at least two
+fixtures auto-approve with no human involved; a note that says "approve this" does not
+change the decision).
 
 ## Important notes
 
-- `placement` uses the image `daprio/dapr:1.13.0`.
-- Service sidecars use `daprio/daprd:1.13.0`.
-- Applications are configured to talk to their sidecar at `http://localhost:3500`.
-- The Dapr component `components/pubsub.yaml` is configured to use Redis at `redis:6379`.
+- `placement` uses the image `daprio/dapr:1.13.0`; sidecars use `daprio/daprd:1.13.0`.
+- DecisionEngine and PaymentService have no published ports — only the Gateway and UI are
+  externally reachable (M6: single entry point).
+- `PaymentGateway.ExecuteBankTransferAsync` has no real bank integration; a vendor name
+  containing `FailBank` simulates a transfer failure, used to exercise the Saga
+  compensation path (see `docs/sample-invoices.json`'s `INV-1012` fixture).
