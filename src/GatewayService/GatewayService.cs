@@ -49,7 +49,7 @@ app.MapPost("/submit", async ([FromBody] InvoicePayload invoice, DaprClient dapr
     var alreadySubmitted = await submissionStore.HasBeenSubmittedAsync(invoice.TrackingId);
     if (alreadySubmitted)
     {
-        logger.LogWarning("{{CorrelationId}} Duplicate submission ignored for invoice {trackingId}.", invoice.TrackingId);
+        logger.LogWarning("{CorrelationId} Duplicate submission ignored for invoice {TrackingId}.", invoice.TrackingId, invoice.TrackingId);
         return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
     }
 
@@ -57,7 +57,7 @@ app.MapPost("/submit", async ([FromBody] InvoicePayload invoice, DaprClient dapr
     await submissionStore.MarkSubmittedAsync(invoice.TrackingId);
     await daprClient.PublishEventAsync(PubSubName, SubmittedTopic, invoice);
 
-    logger.LogInformation("{{CorrelationId}} Invoice submitted {trackingId} by {vendor}.", invoice.TrackingId, invoice.Vendor);
+    logger.LogInformation("{CorrelationId} Invoice submitted {TrackingId} by {Vendor}.", invoice.TrackingId, invoice.TrackingId, invoice.Vendor);
     return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
 });
 
@@ -74,7 +74,7 @@ app.MapGet("/status/{trackingId}", async ([FromRoute] string trackingId, DaprCli
         return Results.NotFound(new { trackingId, message = "Invoice not found." });
     }
 
-    logger.LogInformation("{{CorrelationId}} Status requested for invoice {trackingId}.", trackingId);
+    logger.LogInformation("{CorrelationId} Status requested for invoice {TrackingId}.", trackingId, trackingId);
     return Results.Ok(new
     {
         invoice.TrackingId,
@@ -106,7 +106,7 @@ app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprC
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason });
     await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
 
-    logger.LogInformation("{{CorrelationId}} Invoice {trackingId} approved manually.", trackingId);
+    logger.LogInformation("{CorrelationId} Invoice {TrackingId} approved manually.", trackingId, trackingId);
     return Results.Ok(invoice);
 });
 
@@ -129,7 +129,7 @@ app.MapPost("/reject/{trackingId}", async ([FromRoute] string trackingId, DaprCl
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason });
 
-    logger.LogInformation("{{CorrelationId}} Invoice {trackingId} rejected manually.", trackingId);
+    logger.LogInformation("{CorrelationId} Invoice {TrackingId} rejected manually.", trackingId, trackingId);
     return Results.Ok(invoice);
 });
 

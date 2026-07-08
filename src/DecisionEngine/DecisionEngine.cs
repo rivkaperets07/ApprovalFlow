@@ -1,5 +1,8 @@
-﻿using Dapr;
+using Dapr;
 using Dapr.Client;
+using DecisionEngine.Ai;
+using DecisionEngine.Core.Logic;
+using DecisionEngine.Core.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -8,20 +11,35 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);
+
 builder.Services.AddDaprClient();
 builder.Services.AddLogging();
+builder.Services.AddSingleton<PolicyEngine>();
+
+var aiProviderName = builder.Configuration.GetValue<string>("AiProvider", "Stub");
+if (string.Equals(aiProviderName, "Groq", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddHttpClient<IAiModelProvider, GroqAiModelProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<IAiModelProvider, StubAiModelProvider>();
+}
 
 var app = builder.Build();
 app.UseCloudEvents();
 app.MapSubscribeHandler();
 
-// Configurable ceiling for auto-approval (can be set via env AUTO_APPROVE_CEILING)
-var ceiling = builder.Configuration.GetValue<decimal>("AUTO_APPROVE_CEILING", 1000m);
-
 const string StateStoreName = "statestore";
 const string PubSubName = "pubsub";
 
-app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async ([FromBody] InvoicePayload invoice, DaprClient daprClient, ILogger<Program> logger) =>
+app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async (
+    [FromBody] InvoicePayload invoice,
+    DaprClient daprClient,
+    IAiModelProvider aiProvider,
+    PolicyEngine policyEngine,
+    ILogger<Program> logger) =>
 {
     if (invoice is null)
     {
@@ -29,36 +47,46 @@ app.MapPost("/invoice-submitted", [Topic(PubSubName, "invoice.submitted")] async
     }
 
     var trackingId = invoice.TrackingId ?? Guid.NewGuid().ToString();
-
-    bool approved = invoice.TotalAmount <= ceiling;
-    var reason = approved ? $"Auto-approved under ceiling {ceiling:C}." : "Escalated for human review.";
-
-    // Update invoice status and persist
     invoice.TrackingId = trackingId;
+
+    RouterDecision decision;
+    try
+    {
+        var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
+        decision = await policyEngine.EvaluateAsync(invoice, aiResult);
+    }
+    catch (Exception ex)
+    {
+        // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
+        logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
+        decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
+    }
+
+    var approved = decision.IsApproved;
+    var reason = decision.Reason;
+
     invoice.Status = approved ? InvoiceStatus.Approved : InvoiceStatus.Escalated;
     invoice.Reason = reason;
 
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
 
-    var decision = new DecisionResult
+    var decisionResult = new DecisionResult
     {
         TrackingId = trackingId,
         Approved = approved,
         Reason = reason
     };
 
-    // Publish the decision event
-    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", decision);
+    await daprClient.PublishEventAsync(PubSubName, "invoice.decided", decisionResult);
 
-    logger.LogInformation("{{CorrelationId}} Decision made for invoice {trackingId}: {approved} ({reason})", trackingId, approved, reason);
+    logger.LogInformation("{CorrelationId} Decision made for invoice {TrackingId}: {Approved} ({Reason})", trackingId, trackingId, approved, reason);
 
-    // If approved, also publish to approved topic so payment service can process
     if (approved)
     {
         await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
     }
 
-    return Results.Ok();
+    return Results.Ok(decisionResult);
 });
 
 app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger) =>
@@ -80,7 +108,7 @@ app.MapPost("/approve/{trackingId}", async ([FromRoute] string trackingId, DaprC
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason });
     await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
 
-    logger.LogInformation("{{CorrelationId}} Invoice {trackingId} approved manually.", trackingId);
+    logger.LogInformation("{CorrelationId} Invoice {TrackingId} approved manually.", trackingId, trackingId);
     return Results.Ok(invoice);
 });
 
@@ -102,7 +130,7 @@ app.MapPost("/reject/{trackingId}", async ([FromRoute] string trackingId, DaprCl
     await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
     await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason });
 
-    logger.LogInformation("{{CorrelationId}} Invoice {trackingId} rejected manually.", trackingId);
+    logger.LogInformation("{CorrelationId} Invoice {TrackingId} rejected manually.", trackingId, trackingId);
     return Results.Ok(invoice);
 });
 
@@ -137,4 +165,3 @@ public class DecisionResult
     public bool Approved { get; set; }
     public string Reason { get; set; } = string.Empty;
 }
-

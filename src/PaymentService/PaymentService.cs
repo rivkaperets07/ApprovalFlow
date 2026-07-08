@@ -34,7 +34,7 @@ app.MapPost("/process-payment", [Topic(PaymentConstants.PUBSUB_NAME, PaymentCons
     }
 
     invoice.TrackingId ??= Guid.NewGuid().ToString();
-    logger.LogInformation("{{CorrelationId}} Payment request received for invoice {trackingId} amount {amount:C}.", invoice.TrackingId, invoice.TotalAmount);
+    logger.LogInformation("{CorrelationId} Payment request received for invoice {TrackingId} amount {Amount:C}.", invoice.TrackingId, invoice.TrackingId, invoice.TotalAmount);
 
     var result = await paymentProcessor.ProcessAsync(invoice, logger, daprClient);
     return Results.Ok(result);
@@ -80,7 +80,7 @@ public class PaymentProcessor : IPaymentProcessor
             var processed = await daprClient.GetStateAsync<bool>(PaymentConstants.StateStoreName, processedKey);
             if (processed)
             {
-                logger.LogWarning("{{CorrelationId}} Duplicate payment request ignored for invoice {trackingId}.", trackingId);
+                logger.LogWarning("{CorrelationId} Duplicate payment request ignored for invoice {TrackingId}.", trackingId, trackingId);
                 return new PaymentResult(trackingId, false, "Duplicate request ignored.");
             }
         }
@@ -88,16 +88,16 @@ public class PaymentProcessor : IPaymentProcessor
         {
             if (!_processedInvoices.TryAdd(trackingId, true))
             {
-                logger.LogWarning("{{CorrelationId}} Duplicate payment request ignored for invoice {trackingId}.", trackingId);
+                logger.LogWarning("{CorrelationId} Duplicate payment request ignored for invoice {TrackingId}.", trackingId, trackingId);
                 return new PaymentResult(trackingId, false, "Duplicate request ignored.");
             }
         }
 
-        logger.LogInformation("{{CorrelationId}} Reserving budget for invoice {trackingId}.", trackingId);
+        logger.LogInformation("{CorrelationId} Reserving budget for invoice {TrackingId}.", trackingId, trackingId);
         var reserved = await _budgetService.ReserveBudgetAsync(invoice.Category, invoice.TotalAmount);
         if (!reserved)
         {
-            logger.LogWarning("{{CorrelationId}} Insufficient budget for invoice {trackingId}.", trackingId);
+            logger.LogWarning("{CorrelationId} Insufficient budget for invoice {TrackingId}.", trackingId, trackingId);
             return new PaymentResult(trackingId, false, "Insufficient budget. Payment aborted.");
         }
 
@@ -114,7 +114,7 @@ public class PaymentProcessor : IPaymentProcessor
 
         try
         {
-            logger.LogInformation("{{CorrelationId}} Executing transfer for invoice {trackingId}.", trackingId);
+            logger.LogInformation("{CorrelationId} Executing transfer for invoice {TrackingId}.", trackingId, trackingId);
             var paymentSuccessful = await _paymentGateway.ExecuteBankTransferAsync(invoice.Vendor, invoice.TotalAmount);
             if (paymentSuccessful)
             {
@@ -130,10 +130,10 @@ public class PaymentProcessor : IPaymentProcessor
                 {
                     _reservations.TryRemove(trackingId, out _);
                 }
-                logger.LogInformation("{{CorrelationId}} Payment completed for invoice {trackingId}.", trackingId);
+                logger.LogInformation("{CorrelationId} Payment completed for invoice {TrackingId}.", trackingId, trackingId);
                 return new PaymentResult(trackingId, true, "Payment completed successfully.");
             }
-            logger.LogWarning("{{CorrelationId}} Payment failed for invoice {trackingId}, compensating budget.", trackingId);
+            logger.LogWarning("{CorrelationId} Payment failed for invoice {TrackingId}, compensating budget.", trackingId, trackingId);
             await _budgetService.ReleaseBudgetAsync(invoice.Category, invoice.TotalAmount);
 
             // cleanup reservation
@@ -151,7 +151,7 @@ public class PaymentProcessor : IPaymentProcessor
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "{{CorrelationId}} Unexpected failure while processing invoice {trackingId}.", trackingId);
+            logger.LogError(ex, "{CorrelationId} Unexpected failure while processing invoice {TrackingId}.", trackingId, trackingId);
             await _budgetService.ReleaseBudgetAsync(invoice.Category, invoice.TotalAmount);
             return new PaymentResult(trackingId, false, "Unexpected payment error. Reserved budget released.");
         }
