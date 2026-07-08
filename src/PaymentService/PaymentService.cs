@@ -41,6 +41,11 @@ app.MapPost("/process-payment", [Topic(PaymentConstants.PUBSUB_NAME, PaymentCons
     logger.LogInformation("{CorrelationId} Payment request received for invoice {TrackingId} amount {Amount:C}.", invoice.TrackingId, invoice.TrackingId, invoice.TotalAmount);
 
     var result = await paymentProcessor.ProcessAsync(invoice, logger, daprClient);
+
+    // Surface the payment outcome back to the Gateway (F2, F9): without this, a failed
+    // or compensated payment would be invisible to anyone polling /status.
+    await daprClient.PublishEventAsync(PaymentConstants.PUBSUB_NAME, "payment.completed", result);
+
     return Results.Ok(result);
 });
 

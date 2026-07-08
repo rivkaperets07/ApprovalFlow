@@ -110,8 +110,28 @@ app.MapGet("/status/{trackingId}", async ([FromRoute] string trackingId, DaprCli
         invoice.Vendor,
         invoice.Category,
         invoice.TotalAmount,
-        invoice.DecidedBy
+        invoice.DecidedBy,
+        invoice.PaymentStatus,
+        invoice.PaymentMessage
     });
+});
+
+// Payment outcome (including Saga compensation) arrives asynchronously from
+// PaymentService; merge it into the invoice record so /status reflects it (F2, F9).
+app.MapPost("/payment-completed", [Topic(PubSubName, "payment.completed")] async ([FromBody] PaymentResult result, DaprClient daprClient, ILogger<Program> logger) =>
+{
+    var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(result.TrackingId));
+    if (invoice is null)
+        return Results.Ok();
+
+    invoice.PaymentStatus = result.Success ? "Paid" : "Failed";
+    invoice.PaymentMessage = result.Message;
+    await daprClient.SaveStateAsync(StateStoreName, GetStateKey(result.TrackingId), invoice);
+
+    logger.LogInformation("{CorrelationId} Payment outcome recorded for invoice {TrackingId}: {PaymentStatus} ({Message}).",
+        result.TrackingId, result.TrackingId, invoice.PaymentStatus, result.Message);
+
+    return Results.Ok();
 });
 
 // F4: queue of only the items the system escalated, so an approver never has to
@@ -273,6 +293,9 @@ public class DecisionResult
     public string? DecidedBy { get; set; }
 }
 
+/// <summary>Mirrors PaymentService's PaymentResult wire shape (TrackingId, Success, Message).</summary>
+public record PaymentResult(string TrackingId, bool Success, string Message);
+
 public static class InvoiceStatus
 {
     public const string Pending = "Pending";
@@ -291,4 +314,6 @@ public class InvoicePayload
     public string? Status { get; set; }
     public string? Reason { get; set; }
     public string? DecidedBy { get; set; }
+    public string? PaymentStatus { get; set; }
+    public string? PaymentMessage { get; set; }
 }
