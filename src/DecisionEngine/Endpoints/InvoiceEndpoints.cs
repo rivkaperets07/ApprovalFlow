@@ -57,27 +57,42 @@ public static class InvoiceEndpoints
         }
         else
         {
-            try
+            // GLOBAL-VENDOR (part of the guardrail check just above) guarantees the vendor
+            // is in VendorDirectory at this point, so the category is a deterministic
+            // lookup — the AI is no longer asked to guess it, only to judge whether this
+            // submission's content is coherent with it.
+            var category = policyEngine.ResolveVendorCategory(invoice.Vendor);
+            if (category is null)
             {
-                var aiResult = await aiProvider.AnalyzeAsync(invoice, CancellationToken.None);
-
-                // Structured facts the submitter typed directly always win over anything the
-                // AI might otherwise infer from free-text Notes (no OCR — see TripId on
-                // InvoicePayload).
-                if (!string.IsNullOrWhiteSpace(invoice.TripId))
-                    aiResult.LinkedTripId = invoice.TripId;
-
-                invoice.AiSuggestedCategory = aiResult.SuggestedCategory;
-                invoice.AiConfidence = aiResult.ConfidenceScore;
-                decision = await policyEngine.EvaluateAsync(invoice, aiResult);
-                decidedBy = DecidedBy.Ai;
-            }
-            catch (Exception ex)
-            {
-                // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
-                logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
-                decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
+                // Defense in depth only — should be unreachable, since the guardrail check
+                // above already enforces GLOBAL-VENDOR.
+                decision = RouterDecision.Escalated($"Vendor '{invoice.Vendor}' has no directory category.");
                 decidedBy = DecidedBy.System;
+            }
+            else
+            {
+                invoice.AiSuggestedCategory = category;
+                try
+                {
+                    var aiResult = await aiProvider.AnalyzeAsync(invoice, category, CancellationToken.None);
+
+                    // Structured facts the submitter typed directly always win over anything the
+                    // AI might otherwise infer from free-text Notes (no OCR — see TripId on
+                    // InvoicePayload).
+                    if (!string.IsNullOrWhiteSpace(invoice.TripId))
+                        aiResult.LinkedTripId = invoice.TripId;
+
+                    invoice.AiConfidence = aiResult.ConfidenceScore;
+                    decision = await policyEngine.EvaluateAsync(invoice, category, aiResult);
+                    decidedBy = DecidedBy.Ai;
+                }
+                catch (Exception ex)
+                {
+                    // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
+                    logger.LogError(ex, "{CorrelationId} AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId, trackingId);
+                    decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
+                    decidedBy = DecidedBy.System;
+                }
             }
         }
 

@@ -1,68 +1,80 @@
 using DecisionEngine.Ai;
-using Microsoft.Extensions.Configuration;
 
 public class StubAiModelProviderTests
 {
-    private static IConfiguration BuildConfig() => new ConfigurationBuilder()
-        .AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["VendorDirectory:CloudSoft Inc"] = "SaaS",
-            ["VendorDirectory:Delta Airlines"] = "Travel",
-        })
-        .Build();
-
-    private static InvoicePayload Invoice(string vendor, string? notes = null, string category = "") => new()
+    private static InvoicePayload Invoice(string vendor, string? notes = null, List<LineItem>? lineItems = null) => new()
     {
         TrackingId = Guid.NewGuid().ToString(),
         Vendor = vendor,
         TotalAmount = 100m,
-        Category = category,
-        Notes = notes
+        Notes = notes,
+        LineItems = lineItems
     };
 
     [Fact]
-    public async Task KnownVendor_IsClassifiedWithHighConfidence_RegardlessOfNotes()
+    public async Task NotesMatchTheGivenCategory_IsHighConfidence()
     {
-        var provider = new StubAiModelProvider(BuildConfig());
+        var provider = new StubAiModelProvider();
 
-        var result = await provider.AnalyzeAsync(Invoice("CloudSoft Inc", notes: "totally unrelated text"), default);
+        var result = await provider.AnalyzeAsync(Invoice("CloudSoft Inc", notes: "monthly cloud subscription"), "SaaS", default);
 
-        Assert.Equal("SaaS", result.SuggestedCategory);
         Assert.True(result.ConfidenceScore >= 0.95);
     }
 
     [Fact]
-    public async Task UnknownVendor_FallsBackToKeywordMatch_WithMediumConfidence()
+    public async Task LineItemDescriptions_AreAlsoCheckedForCoherence()
     {
-        var provider = new StubAiModelProvider(BuildConfig());
+        // The signal doesn't have to come from Notes — a line item description that matches
+        // the given category is just as good (this is the new LineItems input this provider
+        // didn't have before).
+        var provider = new StubAiModelProvider();
+        var invoice = Invoice("CloudSoft Inc", notes: null, lineItems: [new LineItem("Annual software license", 100m)]);
 
-        var result = await provider.AnalyzeAsync(Invoice("Some Random Co", notes: "monthly cloud subscription"), default);
+        var result = await provider.AnalyzeAsync(invoice, "SaaS", default);
 
-        Assert.Equal("SaaS", result.SuggestedCategory);
+        Assert.True(result.ConfidenceScore >= 0.95);
+    }
+
+    [Fact]
+    public async Task NoKeywordSignal_IsNeutralConfidence()
+    {
+        var provider = new StubAiModelProvider();
+
+        var result = await provider.AnalyzeAsync(Invoice("CloudSoft Inc", notes: "as discussed last week"), "SaaS", default);
+
         Assert.InRange(result.ConfidenceScore, 0.80, 0.95);
     }
 
     [Fact]
-    public async Task NoVendorMatch_NoKeywordMatch_IsOther_WithLowConfidence()
+    public async Task NotesContradictTheGivenCategory_IsLowConfidence()
     {
-        var provider = new StubAiModelProvider(BuildConfig());
+        // The category is already trusted (from the vendor directory) — this provider's
+        // job is to flag when the content doesn't actually match it, not to reclassify.
+        var provider = new StubAiModelProvider();
 
-        var result = await provider.AnalyzeAsync(Invoice("Totally Unknown Vendor", notes: "gibberish xyz"), default);
+        var result = await provider.AnalyzeAsync(Invoice("CloudSoft Inc", notes: "flight and hotel for the conference"), "SaaS", default);
 
-        Assert.Equal("Other", result.SuggestedCategory);
-        // Deliberately below the 0.80 default MinConfidence so an unclassifiable
-        // invoice escalates instead of being silently auto-approved as "Other".
         Assert.True(result.ConfidenceScore < 0.80);
     }
 
     [Fact]
-    public async Task KnownVendor_Travel_StillExtractsTripId()
+    public async Task Travel_StillExtractsTripId()
     {
-        var provider = new StubAiModelProvider(BuildConfig());
+        var provider = new StubAiModelProvider();
 
-        var result = await provider.AnalyzeAsync(Invoice("Delta Airlines", notes: "TripId: TRIP-42"), default);
+        var result = await provider.AnalyzeAsync(Invoice("Delta Airlines", notes: "TripId: TRIP-42"), "Travel", default);
 
-        Assert.Equal("Travel", result.SuggestedCategory);
         Assert.Equal("TRIP-42", result.LinkedTripId);
+    }
+
+    [Fact]
+    public async Task Travel_NoExplicitTripId_FallsBackToTrackingIdDerivedOne()
+    {
+        var provider = new StubAiModelProvider();
+        var invoice = Invoice("Delta Airlines", notes: "flight to conference");
+
+        var result = await provider.AnalyzeAsync(invoice, "Travel", default);
+
+        Assert.Equal($"TRIP-{invoice.TrackingId}", result.LinkedTripId);
     }
 }

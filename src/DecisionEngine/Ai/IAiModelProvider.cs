@@ -9,5 +9,10 @@ namespace DecisionEngine.Ai;
 /// </summary>
 public interface IAiModelProvider
 {
-    Task<AiAnalysisResult> AnalyzeAsync(InvoicePayload invoice, CancellationToken cancellationToken);
+    /// <summary>
+    /// <paramref name="category"/> is the vendor's directory-resolved category (see
+    /// PolicyEngine.ResolveVendorCategory) — the provider is not asked to classify, only to
+    /// judge whether this specific submission (Notes, LineItems) is coherent with it.
+    /// </summary>
+    Task<AiAnalysisResult> AnalyzeAsync(InvoicePayload invoice, string category, CancellationToken cancellationToken);
 }

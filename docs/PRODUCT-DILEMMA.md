@@ -20,8 +20,9 @@ The tension is a classic one:
   items (a $200 SaaS renewal from a known vendor), which defeats the purpose of automating
   at all. The auto-approval rate stays near zero and the tool adds latency without removing
   work.
-- **Too permissive** → the AI approves things it shouldn't, and a misclassification or a
-  gamed category turns into real money out the door.
+- **Too permissive** → the AI's coherence check overlooks something it shouldn't (or is
+  gamed by a submission crafted to read as legitimate), and that turns into real money out
+  the door.
 
 ## Our decision: per-category autonomy ceilings, not one flat number
 
@@ -59,7 +60,7 @@ be tuned without a redeploy.
 | **Marketing** | **$1,500** flat | 0.85 | Extended category; higher ceiling because spend is lumpier, offset by a stricter confidence bar. |
 | **Meals** | **$75** flat, per submission (personal) / **$800** flat (client entertainment, `MEAL-02`) | 0.90 | `MEAL-01`: each person expenses their own meal separately — no group headcount, so there's no attendee-count field to falsify. Client entertainment is a distinct, submitter-flagged sub-case: `policy.md` only fixes the $500 justification threshold, not a ceiling, so **$800** is our own choice — above the $500 line where MEAL-02's justification+client-name requirement kicks in, but well below Marketing's $1,500 since this is relationship spend, not a campaign budget. Strictest confidence bar of the flat categories since Meals is the highest-frequency, easiest-to-abuse category. |
 | **Travel** | **$200/day per-diem** + **$2,000 cumulative per `TripId`** | 0.85 | Conservative: per-diem ($200) is far below `TRAVEL-02`'s $1,500 single-expense line, and the cumulative cap is tracked across invoices in the Dapr state store. Missing `TripId` → escalate. First/business class (`TRAVEL-03`, submitter-flagged) is always human regardless of amount — checked before the per-diem math so a cheap premium fare can't slip through. |
-| **Other / unknown** | **$100** flat | 0.80 | Fallback for anything the classifier can't place — deliberately low so "I don't know" trends toward a human. |
+| **Other / unknown** | **$100** flat | 0.80 | Fallback when a vendor's directory category has no matching policy section configured — deliberately low so a config gap trends toward a human rather than silently auto-approving. |
 
 ### Hard stops — always human, regardless of amount or confidence
 
@@ -96,28 +97,70 @@ additional evidence trail on top of that — not a substitute for it.
 
 ## Why this can't be over-stepped (the M12 guarantee)
 
-The AI only produces inputs — a category, a confidence score, and extracted fields. Every
-ceiling check is plain C# in `PolicyEngine`, evaluated **after** the AI has spoken and
-**without ever reading the free-text `Notes`**. So a "please approve this" instruction
-smuggled into an invoice has no path into the decision (regression-tested by
-`AntiCheeseGuard_NotesAskingForApproval_DoNotFlipTheDecision`). The category-agnostic
-`RiskThreshold` is the backstop: even if the AI is gamed into a generous category, the
-$5,000 gate fires first.
+The AI never picks the category — `PolicyEngine.ResolveVendorCategory` reads it straight
+from `VendorDirectory`, since `GLOBAL-VENDOR` already guarantees the vendor is known before
+the AI is ever consulted. The AI only produces a confidence score, a reasoning string, and
+extracted fields (like Travel's `TripId`). Every ceiling check is plain C# in
+`PolicyEngine`, evaluated **after** the AI has spoken and **without ever reading the
+free-text `Notes`**. So a "please approve this" instruction smuggled into an invoice has no
+path into the decision (regression-tested by
+`AntiCheeseGuard_NotesAskingForApproval_DoNotFlipTheDecision`), and there is no "generous
+category" for a gamed AI response to redirect to in the first place — the category was
+never the AI's to choose. The category-agnostic `RiskThreshold` remains a backstop on the
+amount itself regardless.
 
-## Known gaps (honest status — not yet enforced)
+## Previously flagged gaps — now closed
 
-To keep this document truthful about what the router does *today*, the following `policy.md`
-rules are **specified but not yet implemented**, and are the planned next steps:
+This document used to list the items below as "specified but not yet implemented." Verified
+against `PolicyEngine.cs` on 2026-07-08 (regression-tested in `PolicyEngineTests.cs`), all are
+implemented and enforced:
+
+- **`MEAL-02`** (client entertainment > $500 needs justification + client name) — implemented
+  in `EvaluateMeals`.
+- **`MEAL-03`** (alcohol-only not reimbursable) — implemented in `EvaluateMeals`.
+- **`TRAVEL-03`** (first/business-class always human) — implemented in `EvaluateTravelAsync`.
+- **`GLOBAL-VENDOR`** (new/unknown vendor → always human) — implemented as a hard stop in
+  `CheckGlobalGuardrails`, checked before any category logic.
+- **`GLOBAL-FX`** (foreign-currency conversion + $1,000 hard stop) — implemented in
+  `CheckGlobalGuardrails`; `InvoicePayload.Currency` carries the submitter-declared original
+  currency.
+
+## AI role change: coherence review, not classification (2026-07-08)
+
+`GLOBAL-VENDOR` already guarantees any vendor the AI sees is in `VendorDirectory` — so
+asking the AI to also guess the category was redundant (and was one more AI-controlled
+input than M12 needed). `PolicyEngine.ResolveVendorCategory` now resolves it with a plain
+config lookup, and `AiAnalysisResult` no longer has a `SuggestedCategory` field. The AI's
+`ConfidenceScore` was repurposed rather than dropped: it now reflects whether the
+submission's `Notes` and (newly passed in) `LineItems` actually read as a legitimate
+expense in the already-known category — the same `MinConfidence`-per-category threshold
+still escalates a low score, but a low score now means "this looks inconsistent or
+suspicious" instead of "the AI wasn't sure what category this is." `StubAiModelProvider`
+implements this by reusing its keyword table for confirmation instead of a first guess
+(`CoherentConfidence` / `NoSignalConfidence` / `MismatchConfidence`); `GroqAiModelProvider`
+tells the LLM the category up front and asks it to judge coherence instead of classify.
+
+## Known gaps (honest status — still open)
 
 - **`AUTONOMY-CEILING` as an additional flat cap** — we intentionally use per-category
-  ceilings instead; if the assignment requires the flat $250 to *also* apply as an absolute
-  cap on top of category logic, that is a one-line global check we have not added.
-- **`MEAL-02`** (client entertainment > $500 needs justification + client name).
-- **`MEAL-03`** (alcohol-only not reimbursable).
-- **`TRAVEL-03`** (first/business-class always human).
-- **`GLOBAL-VENDOR`** as a hard stop (new/unknown vendor → always human) — a vendor
-  directory exists but is used for classification, not yet as a router hard stop.
-- **`GLOBAL-FX`** (foreign-currency conversion + $1,000 hard stop) — no currency field yet.
+  ceilings instead of layering the flat $250 on top; if the assignment requires both, that is
+  a one-line global check we have not added.
+- **F3/M10, general accidental-resubmission case — mostly closed (2026-07-08).**
+  `TrackingId`-based idempotency (`ISubmissionStore`) only dedupes when the *same*
+  `TrackingId` comes back; the UI now generates and holds one across a submission attempt so
+  a failed request's retry reuses it. For clients that mint a fresh `TrackingId` per call
+  (bypassing that), `RecentSubmissionGuard` is a second backstop: it keys on content (Vendor +
+  TotalAmount + Category + Notes) with a 60-second TTL in the state store, so an accidental
+  repeat without an `InvoiceNumber` is still caught. Deliberately time-boxed rather than
+  permanent — like `GLOBAL-FRAUD`, a fuzzy content match must expire so two people
+  legitimately expensing the same vendor/amount/category don't collide. What's still open:
+  two *genuinely distinct* submissions with identical content more than 60 seconds apart are
+  (correctly) not deduped — there's no way to tell those apart from an intentional resubmit
+  without an explicit idempotency key from the caller.
+- **F9, structured rule citations** — `RouterDecision.Reason` cites the triggering `rule_id`
+  in most branches (added for the flat categories in this pass — `SAAS-01`, `HW-01`,
+  `MEAL-01`), but it's still a string an auditor greps rather than a queryable `List<string>`
+  of rule ids on the decision.
 
 ## Tuning without redeploy
 

@@ -37,7 +37,8 @@ The **structural evaluation logic stays in code** (`PolicyEngine.cs`): the
 per-category shape (Travel = per-diem + cumulative trip cap, flat ceilings for every
 other category including Meals) and, critically, the global guardrails
 (`RiskThreshold`, `GLOBAL-RECEIPT`, `GLOBAL-MATH`) that run **before** any
-category logic and do not depend on the AI's chosen category. Configuration
+category logic — the category itself is a `VendorDirectory` lookup
+(`PolicyEngine.ResolveVendorCategory`), not something the AI supplies. Configuration
 supplies the *numbers*; code owns the *gate*. This is what makes M12 provable —
 a manipulated or overconfident AI response can change none of the checks, only
 feed inputs into them.

@@ -1,8 +1,10 @@
 # ApprovalFlow
 
 An AI-assisted, microservice-based invoice/expense approval platform. The system ingests
-invoices, has an AI agent classify them against `docs/policy.md`, auto-approves the
-in-policy majority, and escalates the rest to a human — while a deterministic
+invoices, resolves each one's category from a trusted vendor directory, has an AI agent
+review it for coherence against `docs/policy.md` (not classify it — see
+`docs/PRODUCT-DILEMMA.md`), auto-approves the in-policy majority, and escalates the rest to
+a human — while a deterministic
 [`PolicyEngine`](src/DecisionEngine/Core/Logic/PolicyEngine.cs) guarantees the AI can
 never push a decision past the configured ceilings. Approved items flow through a
 Saga-based payment with compensation on failure. See
@@ -17,7 +19,7 @@ and ADRs, and [`docs/policy.md`](docs/policy.md) for the expense policy being en
   referenced directly by application code.
 - **Redis** backs both the Dapr pub/sub and state store components.
 - **Groq** (free-tier LLM) or a deterministic stub behind `IAiModelProvider` for invoice
-  classification — swappable via config, no code change.
+  coherence review — swappable via config, no code change.
 - **Swashbuckle** (OpenAPI/Swagger UI) on every service.
 - **xUnit + Moq** for automated tests.
 - Plain HTML/JS for the UI — no frontend framework/build step.

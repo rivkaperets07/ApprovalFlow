@@ -34,7 +34,16 @@ public class PolicyEngine
     public RouterDecision? TryFastRejectOnGlobalGuardrails(InvoicePayload invoice)
         => CheckGlobalGuardrails(invoice, LoadGuardrails(), LoadKnownVendors());
 
-    public async Task<RouterDecision> EvaluateAsync(InvoicePayload invoice, AiAnalysisResult aiResult)
+    /// <summary>
+    /// GLOBAL-VENDOR (checked in CheckGlobalGuardrails, both here and in the fast-reject
+    /// path) guarantees a vendor reaching EvaluateAsync is in VendorDirectory — so the
+    /// category is this deterministic lookup, not something the AI needs to guess anymore.
+    /// Null only if a caller skips the guardrail check first (defense in depth).
+    /// </summary>
+    public string? ResolveVendorCategory(string vendor)
+        => _config["VendorDirectory:" + vendor.Trim()];
+
+    public async Task<RouterDecision> EvaluateAsync(InvoicePayload invoice, string category, AiAnalysisResult aiResult)
     {
         var guardrails = LoadGuardrails();
 
@@ -42,14 +51,13 @@ public class PolicyEngine
         if (globalReject is not null)
             return globalReject;
 
-        var category = aiResult.SuggestedCategory;
         var policy = _config.GetSection($"ExpensePolicies:{category}").Get<PolicyConfig>();
         var usedFallback = policy is null;
         if (usedFallback)
         {
             policy = _config.GetSection("ExpensePolicies:Other").Get<PolicyConfig>();
             if (policy is null)
-                return RouterDecision.Escalated($"Unknown category '{category}' and no fallback policy configured.");
+                return RouterDecision.Escalated($"Vendor category '{category}' has no configured policy and no fallback is available.");
         }
 
         var minConfidence = policy!.MinConfidence ?? guardrails.DefaultMinConfidence;
