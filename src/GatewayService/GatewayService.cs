@@ -26,6 +26,7 @@ var daprHttpEndpoint = builder.Configuration.GetValue<string>("DAPR_HTTP_ENDPOIN
 builder.Services.AddDaprClient(client => client.UseHttpEndpoint(daprHttpEndpoint));
 builder.Services.AddSingleton<IDaprStateClient, DaprStateClient>();
 builder.Services.AddSingleton<ISubmissionStore, DaprSubmissionStore>();
+builder.Services.AddSingleton<IInvoiceNotifier, InvoiceNotifier>();
 
 builder.Services.AddCors(options =>
 {

@@ -148,12 +148,25 @@ public class PolicyEngine
     private static bool IsAlcoholLineItem(LineItem item)
         => AlcoholKeywords.Any(keyword => item.Description.Contains(keyword, StringComparison.OrdinalIgnoreCase));
 
+    // F9: lets an auditor pull the exact policy.md rule_id behind a flat-ceiling decision.
+    // Only categories docs/policy.md actually assigns an id to are listed here — Office
+    // Supplies/Marketing are this system's own extended categories with no policy.md rule
+    // to cite, so they're left unlabeled rather than citing something that doesn't exist.
+    private static readonly Dictionary<string, string> FlatCategoryRuleIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["SaaS"] = "SAAS-01",
+        ["Hardware"] = "HW-01",
+        ["Meals"] = "MEAL-01",
+    };
+
     private static RouterDecision EvaluateFlat(InvoicePayload invoice, PolicyConfig policy, string category)
     {
-        if (invoice.TotalAmount > policy.MaxAmount)
-            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the {category} ceiling of {policy.MaxAmount:C}.");
+        var ruleSuffix = FlatCategoryRuleIds.TryGetValue(category, out var ruleId) ? $" ({ruleId})" : string.Empty;
 
-        return RouterDecision.Approved($"Within the {category} ceiling of {policy.MaxAmount:C}.");
+        if (invoice.TotalAmount > policy.MaxAmount)
+            return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the {category} ceiling of {policy.MaxAmount:C}{ruleSuffix}.");
+
+        return RouterDecision.Approved($"Within the {category} ceiling of {policy.MaxAmount:C}{ruleSuffix}.");
     }
 
     private async Task<RouterDecision> EvaluateTravelAsync(InvoicePayload invoice, AiAnalysisResult aiResult, PolicyConfig policy)

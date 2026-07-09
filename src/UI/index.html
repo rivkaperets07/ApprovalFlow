@@ -22,6 +22,7 @@
         .badge-Pending { background: #6c757d; }
         .badge-Approved { background: #28a745; }
         .badge-Escalated { background: #d39e00; }
+        .badge-NeedsInfo { background: #0b7285; }
         .badge-Rejected { background: #dc3545; }
         .badge-Duplicate { background: #7a3ea1; }
         .badge-Paid { background: #28a745; }
@@ -117,6 +118,15 @@
     </div>
 
     <div class="card">
+        <h2>Audit Trail</h2>
+        <p style="color:#666; font-size:0.9em; margin-top:0;">Full decision record for one item — extracted data, AI reasoning, who made the final call, and the payment outcome, all keyed by the tracking id (F9).</p>
+        <label>Tracking ID</label>
+        <input id="auditTrackingId" placeholder="INV-..." />
+        <button id="pullAuditBtn" class="btn-secondary">Pull Audit Trail</button>
+        <pre id="auditResult">—</pre>
+    </div>
+
+    <div class="card">
         <h2>Escalation Queue</h2>
         <p style="color:#666; font-size:0.9em; margin-top:0;">Only items the router could not safely approve on its own.</p>
         <button id="refreshEscalationsBtn" class="btn-secondary">Refresh</button>
@@ -127,12 +137,39 @@
         <h2>Manual Approval</h2>
         <label>Tracking ID</label>
         <input id="manualTrackingId" placeholder="INV-..." />
+        <label>Message <span style="color:#888; font-weight:400;">(only used for "Send Back for Info")</span></label>
+        <input id="manualMessage" placeholder="e.g., Please attach an itemized receipt" />
         <div>
             <button id="approveBtn" class="btn-approve">Approve</button>
             <button id="rejectBtn" class="btn-reject">Reject</button>
+            <button id="requestInfoBtn" class="btn-secondary">Send Back for Info</button>
         </div>
         <h3>Action Result</h3>
         <pre id="manualResult">—</pre>
+    </div>
+
+    <div class="card">
+        <h2>Provide More Info</h2>
+        <p style="color:#666; font-size:0.9em; margin-top:0;">For submitters responding to a "Send Back for Info" request — fill in only what was missing and re-submit. This does not change the vendor, amount, or category (F5 can't be used to sneak past the ceiling that triggered the review).</p>
+        <label>Tracking ID</label>
+        <input id="infoTrackingId" placeholder="INV-..." />
+        <label>Business justification <span style="color:#888; font-weight:400;">(client entertainment)</span></label>
+        <input id="infoBusinessJustification" />
+        <label>Client name <span style="color:#888; font-weight:400;">(client entertainment)</span></label>
+        <input id="infoClientName" />
+        <label>Original currency <span style="color:#888; font-weight:400;">(foreign-currency items)</span></label>
+        <input id="infoCurrency" />
+        <label>Trip ID <span style="color:#888; font-weight:400;">(travel)</span></label>
+        <input id="infoTripId" />
+        <label><input type="checkbox" id="infoIsPremiumTravel" style="width:auto; margin-right:6px;" />First/business class</label>
+        <label>Notes</label>
+        <textarea id="infoNotes" rows="2"></textarea>
+        <label>Itemized breakdown <span style="color:#888; font-weight:400;">(receipt / math mismatch)</span></label>
+        <div id="infoLineItemsContainer"></div>
+        <button type="button" id="infoAddLineItemBtn" class="btn-add-line">+ Add line item</button>
+        <button id="provideInfoBtn" class="btn-submit" style="margin-top:15px;">Submit Additional Info</button>
+        <h3>Action Result</h3>
+        <pre id="provideInfoResult">—</pre>
     </div>
 
     <div class="card">
@@ -313,17 +350,30 @@
             statusBox.textContent = `Submitted as ${trackingId}. Waiting for a decision...`;
             trackingIdField.value = generateTrackingId(); // accepted — next submission gets a fresh id
 
-            // Poll /status until the router (or a human) has decided, or give up after ~15s.
-            for (let attempt = 0; attempt < 15; attempt++) {
-                await new Promise(r => setTimeout(r, 1000));
+            // M8: push-based notification instead of polling — this holds one connection
+            // open and the Gateway wakes it up the moment invoice.decided fires (or replies
+            // immediately if the decision already landed). Falls back to "still pending" +
+            // manual Check Status after ~15s, same as the old polling loop did, in case the
+            // connection stalls.
+            const giveUp = setTimeout(() => {
+                source.close();
+                statusBox.textContent = `Submitted as ${trackingId}. Still pending — use "Check Status" below to keep watching.`;
+                document.getElementById('checkTrackingId').value = trackingId;
+            }, 15000);
+
+            const source = new EventSource(`${gatewayBase()}/notifications/${trackingId}`);
+            source.onmessage = async () => {
+                clearTimeout(giveUp);
+                source.close();
                 const { ok, data } = await callApi(`status/${trackingId}`);
-                if (ok && data && data.status !== 'Pending') {
-                    renderStatusCard(statusBox, data);
-                    return;
-                }
-            }
-            statusBox.textContent = `Submitted as ${trackingId}. Still pending — use "Check Status" below to keep watching.`;
-            document.getElementById('checkTrackingId').value = trackingId;
+                if (ok) renderStatusCard(statusBox, data);
+            };
+            source.onerror = () => {
+                clearTimeout(giveUp);
+                source.close();
+                statusBox.textContent = `Submitted as ${trackingId}. Connection lost — use "Check Status" below.`;
+                document.getElementById('checkTrackingId').value = trackingId;
+            };
         });
 
         // --- Manual status check ---------------------------------------------
@@ -339,6 +389,16 @@
                 return;
             }
             renderStatusCard(box, data);
+        });
+
+        // --- Audit trail (F9) ---------------------------------------------
+        document.getElementById('pullAuditBtn').addEventListener('click', async () => {
+            const id = document.getElementById('auditTrackingId').value.trim();
+            const result = document.getElementById('auditResult');
+            if (!id) return;
+            result.textContent = 'Loading...';
+            const { ok, status, data } = await callApi(`audit/${id}`);
+            result.textContent = ok ? JSON.stringify(data, null, 2) : `HTTP ${status}: not found.`;
         });
 
         // --- Escalation queue ---------------------------------------------
@@ -403,6 +463,59 @@
             loadEscalations();
         });
 
+        // F5: the third leg of the approver's one-action set — send the item back to the
+        // submitter instead of deciding outright. Drops it out of the escalation queue
+        // until the submitter responds via "Provide More Info" below.
+        document.getElementById('requestInfoBtn').addEventListener('click', async () => {
+            const id = document.getElementById('manualTrackingId').value.trim();
+            const message = document.getElementById('manualMessage').value.trim() || null;
+            const { status, data } = await callApi(`request-info/${id}`, 'POST', { Message: message });
+            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
+            loadEscalations();
+        });
+
+        // --- "Provide More Info" line items (independent of the submit form's) ---
+        function addInfoLineItemRow() {
+            const container = document.getElementById('infoLineItemsContainer');
+            const row = document.createElement('div');
+            row.className = 'line-item-row';
+            row.innerHTML = `
+                <input type="text" class="info-line-item-desc" placeholder="Description" />
+                <input type="number" step="0.01" class="info-line-item-amount" placeholder="0.00" />
+                <button type="button" class="line-item-remove" title="Remove">×</button>
+            `;
+            row.querySelector('.line-item-remove').addEventListener('click', () => row.remove());
+            container.appendChild(row);
+        }
+        document.getElementById('infoAddLineItemBtn').addEventListener('click', addInfoLineItemRow);
+
+        function collectInfoLineItems() {
+            const items = Array.from(document.querySelectorAll('#infoLineItemsContainer .line-item-row')).map(row => ({
+                Description: row.querySelector('.info-line-item-desc').value,
+                Amount: parseFloat(row.querySelector('.info-line-item-amount').value) || 0
+            })).filter(item => item.Description || item.Amount);
+            return items.length > 0 ? items : null; // null = "leave what's already stored"
+        }
+
+        // F5's resume half: only send fields the submitter actually filled in (empty ->
+        // null) so this doesn't blank out data the reviewer didn't ask about.
+        document.getElementById('provideInfoBtn').addEventListener('click', async () => {
+            const id = document.getElementById('infoTrackingId').value.trim();
+            const orNull = (value) => value ? value : null;
+            const payload = {
+                Notes: orNull(document.getElementById('infoNotes').value),
+                LineItems: collectInfoLineItems(),
+                BusinessJustification: orNull(document.getElementById('infoBusinessJustification').value),
+                ClientName: orNull(document.getElementById('infoClientName').value),
+                Currency: orNull(document.getElementById('infoCurrency').value),
+                TripId: orNull(document.getElementById('infoTripId').value),
+                IsPremiumTravel: document.getElementById('infoIsPremiumTravel').checked ? true : null
+            };
+            const { status, data } = await callApi(`provide-info/${id}`, 'POST', payload);
+            document.getElementById('provideInfoResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
+            loadEscalations();
+        });
+
         // --- Dashboard stats ---------------------------------------------
         async function loadStats() {
             const panel = document.getElementById('statsPanel');
@@ -416,6 +529,7 @@
                 ['Auto-approved (AI)', data.autoApproved],
                 ['Human-approved', data.humanApproved],
                 ['Escalated (pending)', data.escalatedPending],
+                ['Needs info (pending)', data.needsInfo],
                 ['Rejected', data.rejected],
                 ['Duplicate (rejected)', data.duplicateRejected],
                 ['Auto-approval rate', `${Math.round((data.autoApprovalRate ?? 0) * 100)}%`],

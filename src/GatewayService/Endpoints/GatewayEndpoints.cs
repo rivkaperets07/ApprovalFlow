@@ -23,11 +23,15 @@ public static class GatewayEndpoints
         app.MapPost("/submit", SubmitAsync);
         app.MapGet("/vendors", GetVendorsAsync);
         app.MapGet("/status/{trackingId}", GetStatusAsync);
+        app.MapGet("/audit/{trackingId}", GetAuditTrailAsync);
+        app.MapGet("/notifications/{trackingId}", NotificationsAsync);
         app.MapPost("/payment-completed", HandlePaymentCompletedAsync);
         app.MapGet("/escalations", GetEscalationsAsync);
         app.MapGet("/stats", GetStatsAsync);
         app.MapPost("/approve/{trackingId}", ApproveAsync);
         app.MapPost("/reject/{trackingId}", RejectAsync);
+        app.MapPost("/request-info/{trackingId}", RequestInfoAsync);
+        app.MapPost("/provide-info/{trackingId}", ProvideInfoAsync);
         app.MapPost("/invoice-decided-index", HandleInvoiceDecidedIndexAsync);
     }
 
@@ -170,6 +174,77 @@ public static class GatewayEndpoints
         });
     }
 
+    // F9: the auditor's complete decision trail for one item, linked by its TrackingId as
+    // the correlation id (the same id every log line across every service tags itself
+    // with). Unlike GetStatusAsync above — F2's curated, plain-language submitter view —
+    // this returns the full stored record as-is: the extracted data the submitter/AI
+    // supplied (LineItems, TripId, Currency, BusinessJustification, ClientName,
+    // IsPremiumTravel, InvoiceNumber), the AI's reasoning and confidence, who made the
+    // final call (DecidedBy: AI / System / Human — see DecidedBy.cs), and the payment
+    // outcome once HandlePaymentCompletedAsync has merged it in. No projection here on
+    // purpose — an auditor should not have to guess which fields were left out.
+    private static async Task<IResult> GetAuditTrailAsync([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger)
+    {
+        if (string.IsNullOrWhiteSpace(trackingId))
+        {
+            return Results.BadRequest(new { error = "trackingId is required." });
+        }
+
+        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
+        if (invoice is null || string.IsNullOrEmpty(invoice.TrackingId))
+        {
+            return Results.NotFound(new { trackingId, message = "Invoice not found." });
+        }
+
+        logger.LogInformation("{CorrelationId} Audit trail pulled for invoice {TrackingId}.", trackingId, trackingId);
+        return Results.Ok(invoice);
+    }
+
+    // M8: the notification channel — a client opens this right after /submit and gets the
+    // decision pushed to it (Server-Sent Events) instead of having to poll /status. Checks
+    // current state first in case the decision already landed before the connection opened
+    // (the Stub AI decides in well under a second); otherwise waits on IInvoiceNotifier,
+    // which HandleInvoiceDecidedIndexAsync below publishes to. Sends exactly one event, for
+    // the decision itself — not every later lifecycle change (a human's approve/reject after
+    // an escalation, or the eventual payment outcome), which /status still covers.
+    private static async Task NotificationsAsync(HttpContext context, [FromRoute] string trackingId, DaprClient daprClient, IInvoiceNotifier notifier, ILogger<Program> logger)
+    {
+        if (string.IsNullOrWhiteSpace(trackingId))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
+        context.Response.Headers.ContentType = "text/event-stream";
+        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
+
+        var cancellationToken = context.RequestAborted;
+        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
+
+        object result;
+        if (invoice is not null && invoice.Status != InvoiceStatus.Pending)
+        {
+            result = new { invoice.TrackingId, invoice.Status };
+        }
+        else
+        {
+            try
+            {
+                result = await notifier.WaitForDecisionAsync(trackingId, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // client disconnected before a decision arrived
+            }
+        }
+
+        await context.Response.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(result)}\n\n", cancellationToken);
+        await context.Response.Body.FlushAsync(cancellationToken);
+
+        logger.LogInformation("{CorrelationId} Notification delivered for invoice {TrackingId} via SSE.", trackingId, trackingId);
+    }
+
     // Payment outcome (including Saga compensation) arrives asynchronously from
     // PaymentService; merge it into the invoice record so /status reflects it (F2, F9).
     [Topic(PubSubName, "payment.completed")]
@@ -220,7 +295,7 @@ public static class GatewayEndpoints
     {
         var trackingIds = await StateIndex.GetAllAsync(daprClient, StateStoreName, SubmittedIndexKey);
 
-        int totalSubmitted = 0, autoApproved = 0, humanApproved = 0, escalatedPending = 0, rejected = 0, duplicateRejected = 0;
+        int totalSubmitted = 0, autoApproved = 0, humanApproved = 0, escalatedPending = 0, rejected = 0, duplicateRejected = 0, needsInfo = 0;
         decimal autoApprovedAmount = 0, humanApprovedAmount = 0;
 
         foreach (var trackingId in trackingIds)
@@ -248,6 +323,9 @@ public static class GatewayEndpoints
                 case InvoiceStatus.Duplicate:
                     duplicateRejected++;
                     break;
+                case InvoiceStatus.NeedsInfo:
+                    needsInfo++;
+                    break;
             }
         }
 
@@ -257,6 +335,7 @@ public static class GatewayEndpoints
             autoApproved,
             humanApproved,
             escalatedPending,
+            needsInfo,
             rejected,
             duplicateRejected,
             autoApprovedAmount,
@@ -314,10 +393,90 @@ public static class GatewayEndpoints
         return Results.Ok(invoice);
     }
 
+    // F5, third leg of the approver's one-action set (alongside approve/reject): park the
+    // invoice on the submitter instead of deciding outright. Publishing invoice.decided with
+    // the (now non-Escalated) status already saved lets HandleInvoiceDecidedIndexAsync below
+    // drop it out of the escalation queue exactly the same way approve/reject do — no
+    // separate index-maintenance logic needed for this third action.
+    private static async Task<IResult> RequestInfoAsync([FromRoute] string trackingId, [FromBody] RequestInfoBody? body, DaprClient daprClient, ILogger<Program> logger)
+    {
+        if (string.IsNullOrWhiteSpace(trackingId))
+        {
+            return Results.BadRequest(new { error = "trackingId is required." });
+        }
+
+        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
+        if (invoice is null || string.IsNullOrEmpty(invoice.TrackingId))
+        {
+            return Results.NotFound(new { trackingId, message = "Invoice not found." });
+        }
+
+        var message = string.IsNullOrWhiteSpace(body?.Message)
+            ? "Reviewer requested more information before this can be decided."
+            : body!.Message!.Trim();
+
+        invoice.Status = InvoiceStatus.NeedsInfo;
+        invoice.Reason = message;
+        invoice.DecidedBy = DecidedBy.Human;
+
+        await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
+        await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = message, DecidedBy = DecidedBy.Human });
+
+        logger.LogInformation("{CorrelationId} Invoice {TrackingId} sent back to the submitter for more information.", trackingId, trackingId);
+        return Results.Ok(invoice);
+    }
+
+    // F5's resume half: the submitter fills in whatever was missing and this puts the
+    // invoice back through the exact same evaluation path a first-time submission takes
+    // (invoice.submitted -> DecisionEngine), using the same TrackingId so the audit trail
+    // and payment flow never see two records for one expense. Published directly rather
+    // than through /submit so it isn't swallowed by that endpoint's F3 idempotency guard —
+    // this is a deliberate re-evaluation of an existing invoice, not a possible duplicate.
+    private static async Task<IResult> ProvideInfoAsync([FromRoute] string trackingId, [FromBody] MoreInfoUpdate? update, DaprClient daprClient, ILogger<Program> logger)
+    {
+        if (string.IsNullOrWhiteSpace(trackingId))
+        {
+            return Results.BadRequest(new { error = "trackingId is required." });
+        }
+
+        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
+        if (invoice is null || string.IsNullOrEmpty(invoice.TrackingId))
+        {
+            return Results.NotFound(new { trackingId, message = "Invoice not found." });
+        }
+
+        if (invoice.Status != InvoiceStatus.NeedsInfo)
+        {
+            return Results.BadRequest(new { error = $"Invoice {trackingId} is not awaiting more information (current status: {invoice.Status})." });
+        }
+
+        if (update is not null)
+        {
+            if (update.Notes is not null) invoice.Notes = update.Notes;
+            if (update.LineItems is not null) invoice.LineItems = update.LineItems;
+            if (update.BusinessJustification is not null) invoice.BusinessJustification = update.BusinessJustification;
+            if (update.ClientName is not null) invoice.ClientName = update.ClientName;
+            if (update.Currency is not null) invoice.Currency = update.Currency;
+            if (update.TripId is not null) invoice.TripId = update.TripId;
+            if (update.IsPremiumTravel.HasValue) invoice.IsPremiumTravel = update.IsPremiumTravel.Value;
+        }
+
+        invoice.Status = InvoiceStatus.Pending;
+        invoice.Reason = "Additional information provided; re-evaluating.";
+
+        await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
+        await daprClient.PublishEventAsync(PubSubName, SubmittedTopic, invoice);
+
+        logger.LogInformation("{CorrelationId} Invoice {TrackingId} resubmitted with additional info for re-evaluation.", trackingId, trackingId);
+        return Results.Accepted($"/status/{trackingId}", new { invoice.TrackingId });
+    }
+
     // Keeps the escalation index in sync for every decision, whether it came from
-    // DecisionEngine's automatic evaluation or a manual approve/reject above.
+    // DecisionEngine's automatic evaluation or a manual approve/reject above. Also fires
+    // M8's notification channel (IInvoiceNotifier) so anyone holding open
+    // GET /notifications/{trackingId} gets woken up instead of having to poll.
     [Topic(PubSubName, "invoice.decided")]
-    private static async Task<IResult> HandleInvoiceDecidedIndexAsync([FromBody] DecisionResult decision, DaprClient daprClient)
+    private static async Task<IResult> HandleInvoiceDecidedIndexAsync([FromBody] DecisionResult decision, DaprClient daprClient, IInvoiceNotifier notifier)
     {
         var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(decision.TrackingId));
         if (invoice is null)
@@ -332,8 +491,17 @@ public static class GatewayEndpoints
             await StateIndex.RemoveAsync(daprClient, StateStoreName, EscalatedIndexKey, decision.TrackingId);
         }
 
+        notifier.Publish(decision.TrackingId, new { invoice.TrackingId, invoice.Status });
+
         return Results.Ok();
     }
 
     private static string GetStateKey(string trackingId) => $"invoice-{trackingId}";
+}
+
+// F5: what a reviewer sends along with a "request more info" action — a plain-language
+// note for the submitter, distinct from the InvoicePayload contract itself.
+public class RequestInfoBody
+{
+    public string? Message { get; set; }
 }

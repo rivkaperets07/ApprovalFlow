@@ -102,6 +102,15 @@ change the decision).
 
 ## Important notes
 
+- **Notification channel (M8).** Submitting returns `202 Accepted` with a `TrackingId`
+  immediately; the final decision is *pushed*, not polled for. The UI opens
+  `GET /notifications/{trackingId}` (Server-Sent Events) right after submitting, and the
+  Gateway wakes that connection the moment `invoice.decided` arrives — see
+  `IInvoiceNotifier` in `GatewayEndpoints.cs`. `GET /status/{trackingId}` still exists for
+  manual/repeated checks (F2) and as the UI's fallback if the SSE connection drops. Known
+  limitation: the notifier is in-process, so it only works with a single Gateway instance —
+  scaling the Gateway to multiple replicas would need a shared broker (e.g. Redis pub/sub)
+  behind the same interface instead.
 - `placement` uses the image `daprio/dapr:1.13.0`; sidecars use `daprio/daprd:1.13.0`.
 - DecisionEngine and PaymentService have no published ports — only the Gateway and UI are
   externally reachable (M6: single entry point).
