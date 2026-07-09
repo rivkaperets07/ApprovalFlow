@@ -166,4 +166,4 @@ tells the LLM the category up front and asks it to judge coherence instead of cl
 
 All numbers above live in `policies.json`, bind-mounted into the DecisionEngine container and
 read via `IConfiguration` with `reloadOnChange: true`. Raising a ceiling is a file edit plus
-a few seconds — not a rebuild. See ADR-003 in `docs/ARCHITECTURE.md`.
+a few seconds — not a rebuild. See [ADR 004](adr/004-file-based-policy-configuration.md).

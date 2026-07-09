@@ -1,4 +1,8 @@
-# ADR 001: Data-Driven Policy Engine
+# ADR 004: File-Based Dynamic Policy Configuration
+
+> Complements [ADR 003](003-policy-engine-and-swappable-ai-provider.md): 003 decides *what*
+> is data-driven vs. code (the numbers vs. the gate); this ADR decides *where* the numbers
+> live and *how* they reach the running engine without a redeploy.
 
 ## Status
 Accepted
