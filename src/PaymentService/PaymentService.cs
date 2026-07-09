@@ -11,6 +11,11 @@ CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// M14: structured (JSON) logging instead of the default plain-text console formatter, so
+// every business log line's CorrelationId/TrackingId fields are machine-filterable.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole();
+
 var daprHttpEndpoint = builder.Configuration.GetValue<string>("DAPR_HTTP_ENDPOINT", "http://localhost:3500");
 builder.Services.AddDaprClient(client => client.UseHttpEndpoint(daprHttpEndpoint));
 builder.Services.AddSingleton<IBudgetService, BudgetService>();

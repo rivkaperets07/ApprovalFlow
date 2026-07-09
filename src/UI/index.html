@@ -52,13 +52,14 @@
         <input id="gatewayUrl" value="http://localhost:5000" />
 
         <form id="invoiceForm">
+            <input type="hidden" id="trackingId" />
             <label>Vendor</label>
             <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
             <datalist id="knownVendors"></datalist>
             <p style="color:#888; font-size:0.8em; margin:4px 0 0;">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
             <label>Invoice Number <span style="color:#888; font-weight:400;">(optional)</span></label>
             <input id="invoiceNumber" placeholder="e.g., INV-4471" />
-            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">If given, a repeat of this Vendor + Invoice Number + Amount is rejected as a duplicate (GLOBAL-DUP).</p>
+            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Not required for duplicate protection — that's automatic either way (same submission retried, or the same vendor/amount/category/notes repeated within a minute). This field only adds an extra check when you do have a real invoice number to reference.</p>
             <label>Total Amount (already converted to USD)</label>
             <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
             <label>Original currency <span style="color:#888; font-weight:400;">(leave blank/USD for domestic spend)</span></label>
@@ -244,15 +245,35 @@
         }
         document.getElementById('totalAmount').addEventListener('input', updateLineItemsHint);
 
+        // --- TrackingId (F3): generated client-side and held steady across
+        // retries of the *same* submission attempt, so an accidental double POST
+        // (network retry, browser back-button resubmit, a click that slips past the
+        // disabled button) carries the same id and the Gateway's idempotency check
+        // (ISubmissionStore) actually catches it. Previously the Gateway minted a
+        // fresh GUID server-side whenever the client sent none, so every "accidental"
+        // resubmit looked like a brand-new invoice. A new id is only rotated in once
+        // a submission has been confirmed accepted, so the *next distinct* expense
+        // gets its own id.
+        function generateTrackingId() {
+            return (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        }
+        document.getElementById('trackingId').value = generateTrackingId();
+
         // --- Submit + auto-poll ---------------------------------------------
         document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const submitBtn = e.target.querySelector('.btn-submit');
             if (submitBtn.disabled) return; // a submit for this click is already in flight
 
+            const trackingIdField = document.getElementById('trackingId');
+            if (!trackingIdField.value) trackingIdField.value = generateTrackingId(); // safety net
+
             const tripIdValue = document.getElementById('tripId').value;
             const isClientEntertainment = document.getElementById('isClientEntertainment').checked;
             const payload = {
+                TrackingId: trackingIdField.value,
                 Vendor: document.getElementById('vendor').value,
                 InvoiceNumber: document.getElementById('invoiceNumber').value || null,
                 TotalAmount: parseFloat(document.getElementById('totalAmount').value),
@@ -281,12 +302,16 @@
                 submitBtn.disabled = false;
             }
             if (!submitResult.ok || !submitResult.data?.trackingId) {
+                // Deliberately do not rotate trackingIdField.value here: if the submitter
+                // retries after a failure, the retry should carry the same id so the
+                // Gateway can tell it's the same attempt (F3).
                 statusBox.textContent = `Error: HTTP ${submitResult.status}`;
                 return;
             }
 
             const trackingId = submitResult.data.trackingId;
             statusBox.textContent = `Submitted as ${trackingId}. Waiting for a decision...`;
+            trackingIdField.value = generateTrackingId(); // accepted — next submission gets a fresh id
 
             // Poll /status until the router (or a human) has decided, or give up after ~15s.
             for (let attempt = 0; attempt < 15; attempt++) {

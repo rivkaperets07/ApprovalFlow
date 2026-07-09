@@ -7,6 +7,12 @@ using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// M14: one JSON object per log line (fields include the named CorrelationId/TrackingId
+// placeholders every business log call uses) instead of the default human-readable text
+// formatter, so a request can actually be filtered/followed end-to-end by tooling.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole();
+
 // GLOBAL-FRAUD's "brand-new vendor" signal needs the same known-vendor list DecisionEngine
 // uses for classification. Bind-mounted (see docker-compose.yml) and shared as config
 // rather than a runtime service call, so an unreachable DecisionEngine can never block or

@@ -51,6 +51,18 @@ public static class GatewayEndpoints
             return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
         }
 
+        // M10 backstop: catches an accidental repeat even when the caller doesn't reuse the
+        // same TrackingId and doesn't supply an InvoiceNumber for GLOBAL-DUP to key off —
+        // e.g. an API client minting a fresh TrackingId per call, or a double-click that
+        // slips past the UI's guard. Short time window (60s) so it never blocks two people
+        // legitimately expensing the same vendor/amount/category later.
+        var recentDuplicateOf = await RecentSubmissionGuard.TryClaimAsync(daprClient, StateStoreName, invoice.Vendor, invoice.TotalAmount, invoice.Category, invoice.Notes, invoice.TrackingId);
+        if (recentDuplicateOf is not null)
+        {
+            logger.LogWarning("{CorrelationId} Submission treated as an accidental repeat of invoice {OriginalTrackingId} (same vendor/amount/category/notes within 60s).", invoice.TrackingId, recentDuplicateOf);
+            return Results.Accepted($"/status/{recentDuplicateOf}", new { TrackingId = recentDuplicateOf });
+        }
+
         // GLOBAL-DUP (docs/policy.md): an exact repeat of Vendor + InvoiceNumber +
         // TotalAmount is rejected outright — no second payment. Only applies when
         // InvoiceNumber is supplied (it's optional; see InvoicePayload for why this alone

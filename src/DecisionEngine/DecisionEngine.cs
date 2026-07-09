@@ -16,6 +16,12 @@ CultureInfo.DefaultThreadCurrentCulture = currencyCulture;
 CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// M14: structured (JSON) logging instead of the default plain-text console formatter, so
+// every business log line's CorrelationId/TrackingId fields are machine-filterable.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole();
+
 builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);
 builder.Configuration.AddJsonFile("Ai/vendor-directory.json", optional: false, reloadOnChange: true);
 

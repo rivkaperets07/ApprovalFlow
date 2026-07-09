@@ -25,8 +25,6 @@ public static class InvoiceEndpoints
     {
         app.MapPost("/invoice-submitted", HandleInvoiceSubmittedAsync);
         app.MapGet("/vendors", GetVendors);
-        app.MapPost("/approve/{trackingId}", ApproveAsync);
-        app.MapPost("/reject/{trackingId}", RejectAsync);
     }
 
     [Topic(PubSubName, "invoice.submitted")]
@@ -122,53 +120,6 @@ public static class InvoiceEndpoints
             .ToList();
 
         return Results.Ok(vendors);
-    }
-
-    private static async Task<IResult> ApproveAsync([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger)
-    {
-        if (string.IsNullOrWhiteSpace(trackingId))
-        {
-            return Results.BadRequest(new { error = "trackingId is required." });
-        }
-
-        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
-        if (invoice is null)
-        {
-            return Results.NotFound(new { trackingId, message = "Invoice not found." });
-        }
-
-        invoice.Status = InvoiceStatus.Approved;
-        invoice.Reason = "Manually approved.";
-        invoice.DecidedBy = DecidedBy.Human;
-        await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-        await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = true, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
-        await daprClient.PublishEventAsync(PubSubName, "invoice.approved", invoice);
-
-        logger.LogInformation("{CorrelationId} Invoice {TrackingId} approved manually.", trackingId, trackingId);
-        return Results.Ok(invoice);
-    }
-
-    private static async Task<IResult> RejectAsync([FromRoute] string trackingId, DaprClient daprClient, ILogger<Program> logger)
-    {
-        if (string.IsNullOrWhiteSpace(trackingId))
-        {
-            return Results.BadRequest(new { error = "trackingId is required." });
-        }
-
-        var invoice = await daprClient.GetStateAsync<InvoicePayload>(StateStoreName, GetStateKey(trackingId));
-        if (invoice is null)
-        {
-            return Results.NotFound(new { trackingId, message = "Invoice not found." });
-        }
-
-        invoice.Status = InvoiceStatus.Rejected;
-        invoice.Reason = "Manually rejected.";
-        invoice.DecidedBy = DecidedBy.Human;
-        await daprClient.SaveStateAsync(StateStoreName, GetStateKey(trackingId), invoice);
-        await daprClient.PublishEventAsync(PubSubName, "invoice.decided", new DecisionResult { TrackingId = trackingId, Approved = false, Reason = invoice.Reason, DecidedBy = DecidedBy.Human });
-
-        logger.LogInformation("{CorrelationId} Invoice {TrackingId} rejected manually.", trackingId, trackingId);
-        return Results.Ok(invoice);
     }
 
     private static string GetStateKey(string trackingId) => $"invoice-{trackingId}";
