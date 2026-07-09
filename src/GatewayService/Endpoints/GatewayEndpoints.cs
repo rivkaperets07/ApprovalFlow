@@ -20,18 +20,26 @@ public static class GatewayEndpoints
 
     public static void MapGatewayEndpoints(this WebApplication app)
     {
-        app.MapPost("/submit", SubmitAsync);
-        app.MapGet("/vendors", GetVendorsAsync);
-        app.MapGet("/status/{trackingId}", GetStatusAsync);
-        app.MapGet("/audit/{trackingId}", GetAuditTrailAsync);
-        app.MapGet("/notifications/{trackingId}", NotificationsAsync);
+        // N1 role map. Submitter surface: drive your own submission through its lifecycle.
+        app.MapPost("/submit", SubmitAsync).RequireAuthorization(AuthPolicies.Submitter);
+        app.MapGet("/vendors", GetVendorsAsync).RequireAuthorization(AuthPolicies.Submitter);
+        app.MapGet("/status/{trackingId}", GetStatusAsync).RequireAuthorization(AuthPolicies.Submitter);
+        app.MapGet("/notifications/{trackingId}", NotificationsAsync).RequireAuthorization(AuthPolicies.Submitter);
+        app.MapPost("/provide-info/{trackingId}", ProvideInfoAsync).RequireAuthorization(AuthPolicies.Submitter);
+
+        // Approver/controller/auditor surface: the escalation queue, decisions, and the
+        // dashboards (approver covers the finance personas; admin implies both roles).
+        app.MapGet("/escalations", GetEscalationsAsync).RequireAuthorization(AuthPolicies.Approver);
+        app.MapGet("/stats", GetStatsAsync).RequireAuthorization(AuthPolicies.Approver);
+        app.MapGet("/audit/{trackingId}", GetAuditTrailAsync).RequireAuthorization(AuthPolicies.Approver);
+        app.MapPost("/approve/{trackingId}", ApproveAsync).RequireAuthorization(AuthPolicies.Approver);
+        app.MapPost("/reject/{trackingId}", RejectAsync).RequireAuthorization(AuthPolicies.Approver);
+        app.MapPost("/request-info/{trackingId}", RequestInfoAsync).RequireAuthorization(AuthPolicies.Approver);
+
+        // Dapr sidecar deliveries — anonymous on purpose: the sidecar carries no JWT, and
+        // these routes are only reachable inside the compose network (M6, single published
+        // port notwithstanding, they're not part of the public API surface).
         app.MapPost("/payment-completed", HandlePaymentCompletedAsync);
-        app.MapGet("/escalations", GetEscalationsAsync);
-        app.MapGet("/stats", GetStatsAsync);
-        app.MapPost("/approve/{trackingId}", ApproveAsync);
-        app.MapPost("/reject/{trackingId}", RejectAsync);
-        app.MapPost("/request-info/{trackingId}", RequestInfoAsync);
-        app.MapPost("/provide-info/{trackingId}", ProvideInfoAsync);
         app.MapPost("/invoice-decided-index", HandleInvoiceDecidedIndexAsync);
     }
 

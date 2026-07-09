@@ -48,9 +48,21 @@
 <body>
 
     <div class="card">
-        <h2>Submit New Invoice</h2>
+        <h2>Session</h2>
         <label>Gateway URL</label>
         <input id="gatewayUrl" value="http://localhost:5000" />
+        <label>Role (N1 — decides which actions below the Gateway will allow you)</label>
+        <select id="roleSelect" style="width:100%; padding:10px; margin-top:5px; border:1px solid #ddd; border-radius:4px;">
+            <option value="admin" selected>admin — everything (default so this single demo page can drive all personas)</option>
+            <option value="submitter">submitter — submit &amp; track own expenses</option>
+            <option value="approver">approver — escalation queue, approve/reject, dashboards</option>
+        </select>
+        <button id="loginBtn" class="btn-submit">Get Token</button>
+        <p id="sessionState" style="color:#666; font-size:0.9em;">Not signed in — actions will be rejected with 401.</p>
+    </div>
+
+    <div class="card">
+        <h2>Submit New Invoice</h2>
 
         <form id="invoiceForm">
             <input type="hidden" id="trackingId" />
@@ -183,10 +195,36 @@
             return document.getElementById('gatewayUrl').value.replace(/\/$/, '');
         }
 
+        // --- N1: role-based session -----------------------------------------
+        let authToken = null;
+
+        async function login() {
+            const role = document.getElementById('roleSelect').value;
+            const state = document.getElementById('sessionState');
+            const response = await fetch(`${gatewayBase()}/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ Role: role })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data?.token) {
+                state.textContent = `Could not get a token (HTTP ${response.status}).`;
+                return;
+            }
+            authToken = data.token;
+            state.textContent = `Signed in as ${data.role}. Actions outside this role will get 403.`;
+            loadEscalations();
+            loadStats();
+            loadVendors();
+        }
+        document.getElementById('loginBtn').addEventListener('click', login);
+
         async function callApi(endpoint, method = 'GET', body = null) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
             const response = await fetch(`${gatewayBase()}/${endpoint}`, {
                 method,
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: body ? JSON.stringify(body) : null
             });
             const data = await response.json().catch(() => null);
@@ -361,7 +399,10 @@
                 document.getElementById('checkTrackingId').value = trackingId;
             }, 15000);
 
-            const source = new EventSource(`${gatewayBase()}/notifications/${trackingId}`);
+            // EventSource cannot set an Authorization header, so the token travels as an
+            // access_token query parameter — the Gateway's JwtBearer OnMessageReceived
+            // accepts it for /notifications only.
+            const source = new EventSource(`${gatewayBase()}/notifications/${trackingId}?access_token=${encodeURIComponent(authToken ?? '')}`);
             source.onmessage = async () => {
                 clearTimeout(giveUp);
                 source.close();
@@ -542,10 +583,9 @@
         }
         document.getElementById('refreshStatsBtn').addEventListener('click', loadStats);
 
-        // Initial load
-        loadEscalations();
-        loadStats();
-        loadVendors();
+        // Initial load: sign in with the default role first (N1), then the panels load
+        // from inside login() once a token is available.
+        login();
         updateLineItemsHint();
     </script>
 </body>

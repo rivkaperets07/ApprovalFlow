@@ -69,14 +69,29 @@ docker compose logs -f gateway gateway-sidecar decision-engine decision-engine-s
 Open the UI at http://localhost:8080, or drive the API directly at http://localhost:5000
 (Swagger UI at http://localhost:5000/swagger).
 
+## Authentication (N1)
+
+Every business endpoint requires a JWT with a role — `submitter` (submit and track your
+own expenses), `approver` (escalation queue, approve/reject/request-info, dashboards, audit
+trail), or `admin` (everything). `POST /token` issues a self-signed demo token for a chosen
+role — deliberately with no password check, since the demo demonstrates role-based
+authorization wiring, not identity management. The UI has a role picker and signs in as
+`admin` on load so one page can drive all personas; switch roles to see 403s on
+out-of-role actions. Dapr-sidecar-delivered routes (`/payment-completed`,
+`/invoice-decided-index`) stay anonymous by design — the sidecar carries no JWT and those
+routes are not part of the public surface. The signing key is `JWT_SIGNING_KEY`
+(`.env.example`); the checked-in fallback is for local demo only.
+
 ## Quick manual test
 
 ```powershell
+$token = (Invoke-RestMethod -Uri http://localhost:5000/token -Method Post -ContentType 'application/json' -Body '{"Role":"admin"}').token
+$headers = @{ Authorization = "Bearer $token" }
 $body = '{"vendor":"CloudSoft Inc","category":"SaaS","totalAmount":350,"notes":"Monthly subscription for cloud-hosted software license."}'
-$submit = Invoke-RestMethod -Uri http://localhost:5000/submit -Method Post -ContentType 'application/json' -Body $body
-Invoke-RestMethod -Uri "http://localhost:5000/status/$($submit.trackingId)" -Method Get
-Invoke-RestMethod -Uri http://localhost:5000/escalations -Method Get
-Invoke-RestMethod -Uri http://localhost:5000/stats -Method Get
+$submit = Invoke-RestMethod -Uri http://localhost:5000/submit -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Uri "http://localhost:5000/status/$($submit.trackingId)" -Method Get -Headers $headers
+Invoke-RestMethod -Uri http://localhost:5000/escalations -Method Get -Headers $headers
+Invoke-RestMethod -Uri http://localhost:5000/stats -Method Get -Headers $headers
 ```
 
 ## How to test

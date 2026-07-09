@@ -20,6 +20,9 @@
       dockerfile: GatewayService/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
+      # N1: HMAC key for the self-signed demo JWTs. Empty falls back to the checked-in
+      # demo default (fine locally; override in .env for anything shared).
+      - JWT_SIGNING_KEY=${JWT_SIGNING_KEY:-}
     ports:
       - "5000:8080"
     depends_on:

@@ -4,13 +4,13 @@
     "Journey": "auto-approve",
     "TrackingId": "INV-1001",
     "Vendor": "CloudSoft Inc",
-    "TotalAmount": 350.00,
+    "TotalAmount": 180.00,
     "Category": "SaaS",
     "Notes": "Monthly subscription for cloud-hosted software license.",
     "LineItems": [
-      { "Description": "Cloud software subscription - monthly", "Amount": 350.00 }
+      { "Description": "Cloud software subscription - monthly", "Amount": 180.00 }
     ],
-    "ExpectedOutcome": "Auto-approved, no human involved. Classified as SaaS, $350 is within the $500 SaaS ceiling, stub confidence 0.95 clears the 0.80 minimum. Line items match the total exactly (GLOBAL-RECEIPT/GLOBAL-MATH satisfied)."
+    "ExpectedOutcome": "Auto-approved, no human involved. Known vendor (SaaS), $180 is within the $200 SaaS ceiling (SAAS-01), coherence confidence clears the 0.80 minimum. Line items match the total exactly (GLOBAL-RECEIPT/GLOBAL-MATH satisfied)."
   },
   {
     "FixtureId": "INV-1003",
@@ -31,11 +31,11 @@
     "Journey": "duplicate",
     "TrackingId": "INV-1001",
     "Vendor": "CloudSoft Inc",
-    "TotalAmount": 350.00,
+    "TotalAmount": 180.00,
     "Category": "SaaS",
     "Notes": "Monthly subscription for cloud-hosted software license.",
     "LineItems": [
-      { "Description": "Cloud software subscription - monthly", "Amount": 350.00 }
+      { "Description": "Cloud software subscription - monthly", "Amount": 180.00 }
     ],
     "ExpectedOutcome": "Re-submission of INV-1001 with the same TrackingId (simulating a redelivered/retried request). Gateway's ISubmissionStore short-circuits it before it is saved or re-published, so it is never decided or paid twice."
   },
@@ -44,11 +44,11 @@
     "Journey": "payment-failure-and-compensation",
     "TrackingId": "INV-1012",
     "Vendor": "FailBank Payments Co",
-    "TotalAmount": 300.00,
+    "TotalAmount": 150.00,
     "Category": "SaaS",
     "Notes": "Annual software subscription renewal.",
     "LineItems": [
-      { "Description": "Annual subscription renewal", "Amount": 300.00 }
+      { "Description": "Annual subscription renewal", "Amount": 150.00 }
     ],
     "ExpectedOutcome": "Auto-approved by DecisionEngine (SaaS, within ceiling), then PaymentService's ExecuteBankTransferAsync simulates a failure because the vendor name contains \"FailBank\" (see PaymentGateway.cs). The Saga compensation path releases the reserved budget; PaymentResult.Success is false."
   }
