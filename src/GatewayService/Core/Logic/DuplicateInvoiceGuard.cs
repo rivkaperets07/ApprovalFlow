@@ -11,6 +11,8 @@ using Dapr.Client;
 /// </summary>
 public static class DuplicateInvoiceGuard
 {
+    private const int MaxAttempts = 3;
+
     public static string BuildKey(string vendor, string invoiceNumber, decimal total)
     {
         var normalizedVendor = vendor.Trim().ToLowerInvariant();
@@ -27,11 +29,24 @@ public static class DuplicateInvoiceGuard
     public static async Task<bool> IsDuplicateAsync(DaprClient daprClient, string storeName, string vendor, string invoiceNumber, decimal total)
     {
         var key = BuildKey(vendor, invoiceNumber, total);
-        var (seen, etag) = await daprClient.GetStateAndETagAsync<bool?>(storeName, key);
-        if (seen == true)
-            return true;
 
-        await daprClient.TrySaveStateAsync(storeName, key, true, etag);
-        return false;
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            var (seen, etag) = await daprClient.GetStateAndETagAsync<bool?>(storeName, key);
+            if (seen == true)
+                return true;
+
+            // The TrySaveStateAsync result matters: losing this ETag race means a
+            // concurrent submission with the same Vendor + InvoiceNumber + TotalAmount just
+            // recorded the key — loop back so the re-read flags *this* one as the duplicate,
+            // instead of both slipping through and paying twice.
+            if (await daprClient.TrySaveStateAsync(storeName, key, true, etag))
+                return false;
+        }
+
+        // Attempts exhausted without recording or confirming. The only writer of this key
+        // is this guard for this exact three-field content, so err on the side GLOBAL-DUP
+        // exists for: no second payment — call it a duplicate.
+        return true;
     }
 }

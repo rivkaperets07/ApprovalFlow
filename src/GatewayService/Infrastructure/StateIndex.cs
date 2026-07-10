@@ -5,6 +5,14 @@ using Dapr.Client;
 /// invoices are currently escalated"), since the Dapr state API has no native list/scan
 /// operation. Reads and writes are ETag-guarded with a short retry loop so concurrent
 /// updates from different requests don't silently overwrite each other.
+/// Known trade-off: GatewayIndexKeys.Submitted (unlike Escalated, which shrinks again as
+/// items are decided) only ever grows — every submission joins it and nothing ever
+/// removes an entry. /stats reads the whole thing on every call (via
+/// ApproverEndpoints.LoadInvoicesAsync's bulk read), so both the size of that one Redis
+/// value and the dashboard's load time scale with all-time submission count, not recent
+/// activity. Acceptable for this system's scope (a bounded demo, not a long-lived
+/// high-volume service); a real deployment would page this — e.g. a per-day index plus a
+/// running total for the counts /stats reports, so old days are read only if requested.
 /// </summary>
 public static class StateIndex
 {

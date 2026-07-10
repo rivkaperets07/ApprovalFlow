@@ -62,10 +62,16 @@ thresholds to a Dapr `configurationstore` later is a config-only change; no
   file, no redeploy.
 - **M12 preserved** — the enforcing gate is deterministic code, not data, so no
   configuration edit (and no AI output) can push a decision past the ceiling.
-- **Not self-service (yet).** Retuning means editing a JSON file on the host,
-  not a controller-facing UI/API. Adequate for the demo; a future admin endpoint
-  (`GET/PUT /policy`) gated by an `admin` role (N1) would close this gap and
-  reuse the same file + `reloadOnChange` path.
+- **Self-service, closed (2026-07-09).** `GET/PUT /policy` (admin-only, N1) now exists on
+  both DecisionEngine and the Gateway proxy (`AdminEndpoints.cs` on each side) — it reads
+  and replaces the exact file `IConfiguration` loads with `reloadOnChange`, so a PUT takes
+  effect on the next evaluation with no restart, same as a manual file edit. Validation is
+  intentionally shallow (well-formed JSON with the two expected top-level sections) — this
+  file was never the thing keeping M12 safe, `PolicyEngine`'s hard-coded gate is, so a
+  looser or malformed edit can only make the system *more* conservative (escalate more),
+  never bypass a ceiling. The vendor directory (`vendor-directory.json`) got the same
+  treatment via `POST /vendors`, for the same reason (GLOBAL-VENDOR's category lookup is
+  the other config file this system needed self-service for).
 - **New *flat* categories are pure config** (add a section; unknown categories
   fall back to `Other`). New categories with *bespoke* logic (like Travel's cumulative
   trip cap) still require code — an accepted, deliberate boundary, since the assignment

@@ -4,589 +4,278 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ZioNet - Invoice Dashboard</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; background-color: #f4f7f6; }
-        .card { max-width: 640px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        label { display: block; margin-top: 10px; font-weight: 600; }
-        input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-        button { margin-top: 15px; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
-        .btn-submit { background: #0066cc; }
-        .btn-approve { background: #28a745; }
-        .btn-reject { background: #dc3545; }
-        .btn-secondary { background: #6c757d; }
-        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; }
-        .status-card { margin-top: 15px; padding: 14px 16px; border-radius: 6px; border: 1px solid #ddd; }
-        .status-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.95em; }
-        .status-row span:first-child { color: #666; }
-        .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 700; color: white; }
-        .badge-Pending { background: #6c757d; }
-        .badge-Approved { background: #28a745; }
-        .badge-Escalated { background: #d39e00; }
-        .badge-NeedsInfo { background: #0b7285; }
-        .badge-Rejected { background: #dc3545; }
-        .badge-Duplicate { background: #7a3ea1; }
-        .badge-Paid { background: #28a745; }
-        .badge-Failed { background: #dc3545; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9em; }
-        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
-        .empty { color: #888; font-style: italic; }
-        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
-        .stat-box { background: #f4f7f6; border-radius: 6px; padding: 10px 12px; }
-        .stat-box .n { font-size: 1.4em; font-weight: 700; }
-        .stat-box .l { font-size: 0.8em; color: #666; }
-        .conditional-field { display: none; background: #f0f6ff; border-radius: 6px; padding: 10px 12px; margin-top: 10px; }
-        .conditional-field.visible { display: block; }
-        .conditional-field label { margin-top: 0; }
-        .line-items-hint { font-size: 0.8em; color: #888; margin: 4px 0 0; }
-        .line-items-hint.warn { color: #b8791c; font-weight: 600; }
-        .line-item-row { display: grid; grid-template-columns: 1fr 110px 32px; gap: 6px; margin-top: 6px; align-items: center; }
-        .line-item-row input { margin-top: 0; }
-        .line-item-remove { background: #dc3545; color: white; border: none; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; margin-top: 0; padding: 0; }
-        .btn-add-line { background: #0066cc; margin-top: 8px; padding: 6px 14px; font-size: 0.85em; }
-    </style>
+    <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-    <div class="card">
+<div class="page">
+
+    <header class="page-header">
+        <h1>ApprovalFlow</h1>
+        <p class="hint">Invoice &amp; expense approval — submit, review, and audit in one place.</p>
+    </header>
+
+    <div class="card card-session">
         <h2>Session</h2>
         <label>Gateway URL</label>
         <input id="gatewayUrl" value="http://localhost:5000" />
-        <label>Role (N1 — decides which actions below the Gateway will allow you)</label>
-        <select id="roleSelect" style="width:100%; padding:10px; margin-top:5px; border:1px solid #ddd; border-radius:4px;">
-            <option value="admin" selected>admin — everything (default so this single demo page can drive all personas)</option>
-            <option value="submitter">submitter — submit &amp; track own expenses</option>
-            <option value="approver">approver — escalation queue, approve/reject, dashboards</option>
-        </select>
-        <button id="loginBtn" class="btn-submit">Get Token</button>
-        <p id="sessionState" style="color:#666; font-size:0.9em;">Not signed in — actions will be rejected with 401.</p>
-    </div>
 
-    <div class="card">
-        <h2>Submit New Invoice</h2>
-
-        <form id="invoiceForm">
-            <input type="hidden" id="trackingId" />
-            <label>Vendor</label>
-            <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
-            <datalist id="knownVendors"></datalist>
-            <p style="color:#888; font-size:0.8em; margin:4px 0 0;">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
-            <label>Invoice Number <span style="color:#888; font-weight:400;">(optional)</span></label>
-            <input id="invoiceNumber" placeholder="e.g., INV-4471" />
-            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Not required for duplicate protection — that's automatic either way (same submission retried, or the same vendor/amount/category/notes repeated within a minute). This field only adds an extra check when you do have a real invoice number to reference.</p>
-            <label>Total Amount (already converted to USD)</label>
-            <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
-            <label>Original currency <span style="color:#888; font-weight:400;">(leave blank/USD for domestic spend)</span></label>
-            <input id="currency" placeholder="e.g., EUR, GBP — blank means USD" />
-            <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Foreign-currency items over $1,000 are always human-reviewed (GLOBAL-FX).</p>
-            <label>Category (your own label — a hint, not the final word)</label>
-            <input id="category" placeholder="e.g., SaaS, Meals, Travel..." />
-
-            <div id="mealsField" class="conditional-field">
-                <label><input type="checkbox" id="isClientEntertainment" style="width:auto; margin-right:6px;" />This is client entertainment</label>
-                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Personal meals auto-approve up to $75. Client entertainment has its own $800 ceiling, but over $500 needs a business justification and client name below (MEAL-02).</p>
-                <div id="clientEntertainmentFields" style="display:none; margin-top:8px;">
-                    <label>Business justification</label>
-                    <input id="businessJustification" placeholder="e.g., Contract renewal dinner" />
-                    <label>Client name</label>
-                    <input id="clientName" placeholder="e.g., Northwind Corp" />
-                </div>
-            </div>
-
-            <div id="travelField" class="conditional-field">
-                <label>Trip ID</label>
-                <input id="tripId" placeholder="e.g., TRIP-42" />
-                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Travel expenses accumulate against this Trip ID's $2,000 cap.</p>
-                <label style="margin-top:10px;"><input type="checkbox" id="isPremiumTravel" style="width:auto; margin-right:6px;" />First/business class</label>
-                <p style="color:#666; font-size:0.8em; margin:4px 0 0;">Always requires manager approval, regardless of amount (TRAVEL-03).</p>
-            </div>
-
-            <label>Notes</label>
-            <textarea id="description" rows="2"></textarea>
-
-            <label>Itemized breakdown <span id="lineItemsRequired" style="display:none; color:#b8791c;">(required over $25)</span></label>
-            <div id="lineItemsContainer"></div>
-            <button type="button" id="addLineItemBtn" class="btn-add-line">+ Add line item</button>
-            <p id="lineItemsHint" class="line-items-hint">No line items yet.</p>
-
-            <button type="submit" class="btn-submit">Submit Invoice</button>
-        </form>
-        <div id="submitStatus" class="status-card" style="display:none;"></div>
-    </div>
-
-    <div class="card">
-        <h2>Known Vendors</h2>
-        <p style="color:#666; font-size:0.9em; margin-top:0;">The router recognizes these by name with high confidence. Anything else is classified by keywords in the vendor/notes text instead — and if nothing matches, it defaults to a low-confidence "Other" that escalates rather than guesses.</p>
-        <button id="refreshVendorsBtn" class="btn-secondary">Refresh</button>
-        <div id="vendorsList"></div>
-    </div>
-
-    <div class="card">
-        <h2>Check Status</h2>
-        <p style="color:#666; font-size:0.9em; margin-top:0;">See whether an invoice was auto-approved, escalated for human review, rejected, and what happened to its payment.</p>
-        <label>Tracking ID</label>
-        <input id="checkTrackingId" placeholder="INV-..." />
-        <button id="checkStatusBtn" class="btn-secondary">Check Status</button>
-        <div id="checkStatusResult" class="status-card" style="display:none;"></div>
-    </div>
-
-    <div class="card">
-        <h2>Audit Trail</h2>
-        <p style="color:#666; font-size:0.9em; margin-top:0;">Full decision record for one item — extracted data, AI reasoning, who made the final call, and the payment outcome, all keyed by the tracking id (F9).</p>
-        <label>Tracking ID</label>
-        <input id="auditTrackingId" placeholder="INV-..." />
-        <button id="pullAuditBtn" class="btn-secondary">Pull Audit Trail</button>
-        <pre id="auditResult">—</pre>
-    </div>
-
-    <div class="card">
-        <h2>Escalation Queue</h2>
-        <p style="color:#666; font-size:0.9em; margin-top:0;">Only items the router could not safely approve on its own.</p>
-        <button id="refreshEscalationsBtn" class="btn-secondary">Refresh</button>
-        <div id="escalationsList"></div>
-    </div>
-
-    <div class="card">
-        <h2>Manual Approval</h2>
-        <label>Tracking ID</label>
-        <input id="manualTrackingId" placeholder="INV-..." />
-        <label>Message <span style="color:#888; font-weight:400;">(only used for "Send Back for Info")</span></label>
-        <input id="manualMessage" placeholder="e.g., Please attach an itemized receipt" />
-        <div>
-            <button id="approveBtn" class="btn-approve">Approve</button>
-            <button id="rejectBtn" class="btn-reject">Reject</button>
-            <button id="requestInfoBtn" class="btn-secondary">Send Back for Info</button>
+        <div class="top-actions" style="margin-top:14px;">
+            <button id="showLoginBtn" class="btn-submit">Log In</button>
+            <button id="showRegisterBtn" class="btn-secondary">Register</button>
+            <button id="logoutBtn" class="btn-secondary" style="display:none;">Log Out</button>
         </div>
-        <h3>Action Result</h3>
-        <pre id="manualResult">—</pre>
+
+        <div id="loginForm" class="session-forms">
+            <label>Email</label>
+            <input id="loginEmail" type="email" placeholder="e.g., admin@zionet.demo" />
+            <label>Password</label>
+            <input id="loginPassword" type="password" placeholder="Password" />
+            <p class="hint">Seeded demo accounts (see README): submitter@zionet.demo / Submitter123!, approver@zionet.demo / Approver123!, admin@zionet.demo / Admin123!</p>
+            <button id="loginBtn" class="btn-submit">Log In</button>
+        </div>
+
+        <div id="registerForm" class="session-forms" style="display:none;">
+            <label>Name</label>
+            <input id="registerName" placeholder="e.g., Jane Doe" />
+            <label>Email</label>
+            <input id="registerEmail" type="email" placeholder="you@company.com" />
+            <label>Password</label>
+            <input id="registerPassword" type="password" placeholder="At least 8 characters" />
+            <p class="hint">New accounts always start as submitter. An admin can promote yours afterward (see "Manage Users" once signed in as admin).</p>
+            <button id="registerBtn" class="btn-submit">Create Account</button>
+        </div>
+
+        <p id="sessionState" class="session-state">Not signed in — log in or register above.</p>
+
+        <div id="changePasswordForm" class="subpanel" style="display:none;">
+            <h3>Change Password</h3>
+            <label>Current Password</label>
+            <input id="currentPassword" type="password" placeholder="Current password" />
+            <label>New Password</label>
+            <input id="newPassword" type="password" placeholder="At least 8 characters" />
+            <button id="changePasswordBtn" class="btn-submit">Change Password</button>
+            <p id="changePasswordState" class="hint"></p>
+        </div>
     </div>
 
-    <div class="card">
-        <h2>Provide More Info</h2>
-        <p style="color:#666; font-size:0.9em; margin-top:0;">For submitters responding to a "Send Back for Info" request — fill in only what was missing and re-submit. This does not change the vendor, amount, or category (F5 can't be used to sneak past the ceiling that triggered the review).</p>
-        <label>Tracking ID</label>
-        <input id="infoTrackingId" placeholder="INV-..." />
-        <label>Business justification <span style="color:#888; font-weight:400;">(client entertainment)</span></label>
-        <input id="infoBusinessJustification" />
-        <label>Client name <span style="color:#888; font-weight:400;">(client entertainment)</span></label>
-        <input id="infoClientName" />
-        <label>Original currency <span style="color:#888; font-weight:400;">(foreign-currency items)</span></label>
-        <input id="infoCurrency" />
-        <label>Trip ID <span style="color:#888; font-weight:400;">(travel)</span></label>
-        <input id="infoTripId" />
-        <label><input type="checkbox" id="infoIsPremiumTravel" style="width:auto; margin-right:6px;" />First/business class</label>
-        <label>Notes</label>
-        <textarea id="infoNotes" rows="2"></textarea>
-        <label>Itemized breakdown <span style="color:#888; font-weight:400;">(receipt / math mismatch)</span></label>
-        <div id="infoLineItemsContainer"></div>
-        <button type="button" id="infoAddLineItemBtn" class="btn-add-line">+ Add line item</button>
-        <button id="provideInfoBtn" class="btn-submit" style="margin-top:15px;">Submit Additional Info</button>
-        <h3>Action Result</h3>
-        <pre id="provideInfoResult">—</pre>
-    </div>
+    <section class="role-section" data-role="submitter">
+        <h2 class="section-title">Submitter</h2>
+        <div class="card-grid">
 
-    <div class="card">
-        <h2>Dashboard</h2>
-        <button id="refreshStatsBtn" class="btn-secondary">Refresh</button>
-        <div id="statsPanel" class="stats-grid"></div>
-    </div>
+            <div class="card">
+                <h2>Submit New Invoice</h2>
 
-    <script>
-        function gatewayBase() {
-            return document.getElementById('gatewayUrl').value.replace(/\/$/, '');
-        }
+                <form id="invoiceForm">
+                    <input type="hidden" id="trackingId" />
+                    <label>Vendor</label>
+                    <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
+                    <datalist id="knownVendors"></datalist>
+                    <p class="hint">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
+                    <label>Invoice Number <span class="optional">(optional)</span></label>
+                    <input id="invoiceNumber" placeholder="e.g., INV-4471" />
+                    <p class="hint">Not required for duplicate protection — that's automatic either way (same submission retried, or the same vendor/amount/category/notes repeated within a minute). This field only adds an extra check when you do have a real invoice number to reference.</p>
+                    <label>Total Amount (already converted to USD)</label>
+                    <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
+                    <label>Original currency <span class="optional">(leave blank/USD for domestic spend)</span></label>
+                    <input id="currency" placeholder="e.g., EUR, GBP — blank means USD" />
+                    <p class="hint">Foreign-currency items over $1,000 are always human-reviewed (GLOBAL-FX).</p>
 
-        // --- N1: role-based session -----------------------------------------
-        let authToken = null;
+                    <div id="mealsField" class="conditional-field">
+                        <label><input type="checkbox" id="isClientEntertainment" />This is client entertainment</label>
+                        <p class="hint">Personal meals auto-approve up to $75. Client entertainment has its own $800 ceiling, but over $500 needs a business justification and client name below (MEAL-02).</p>
+                        <div id="clientEntertainmentFields" style="display:none; margin-top:8px;">
+                            <label>Business justification</label>
+                            <input id="businessJustification" placeholder="e.g., Contract renewal dinner" />
+                            <label>Client name</label>
+                            <input id="clientName" placeholder="e.g., Northwind Corp" />
+                        </div>
+                    </div>
 
-        async function login() {
-            const role = document.getElementById('roleSelect').value;
-            const state = document.getElementById('sessionState');
-            const response = await fetch(`${gatewayBase()}/token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ Role: role })
-            });
-            const data = await response.json().catch(() => null);
-            if (!response.ok || !data?.token) {
-                state.textContent = `Could not get a token (HTTP ${response.status}).`;
-                return;
-            }
-            authToken = data.token;
-            state.textContent = `Signed in as ${data.role}. Actions outside this role will get 403.`;
-            loadEscalations();
-            loadStats();
-            loadVendors();
-        }
-        document.getElementById('loginBtn').addEventListener('click', login);
+                    <div id="travelField" class="conditional-field">
+                        <label>Trip ID</label>
+                        <input id="tripId" placeholder="e.g., TRIP-42" />
+                        <p class="hint">Travel expenses accumulate against this Trip ID's $2,000 cap.</p>
+                        <label style="margin-top:10px;"><input type="checkbox" id="isPremiumTravel" />First/business class</label>
+                        <p class="hint">Always requires manager approval, regardless of amount (TRAVEL-03).</p>
+                    </div>
 
-        async function callApi(endpoint, method = 'GET', body = null) {
-            const headers = { 'Content-Type': 'application/json' };
-            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-            const response = await fetch(`${gatewayBase()}/${endpoint}`, {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : null
-            });
-            const data = await response.json().catch(() => null);
-            return { ok: response.ok, status: response.status, data };
-        }
+                    <label>Notes</label>
+                    <textarea id="description" rows="2"></textarea>
 
-        function badge(value) {
-            if (!value) return '<span class="empty">—</span>';
-            return `<span class="badge badge-${value}">${value}</span>`;
-        }
+                    <label>Itemized breakdown <span id="lineItemsRequired" class="required-tag" style="display:none;">(required over $25)</span></label>
+                    <div id="lineItemsContainer"></div>
+                    <button type="button" id="addLineItemBtn" class="btn-add-line">+ Add line item</button>
+                    <p id="lineItemsHint" class="line-items-hint">No line items yet.</p>
 
-        function renderStatusCard(container, invoice) {
-            container.style.display = 'block';
-            const aiCategoryRow = invoice.aiSuggestedCategory
-                ? `<div class="status-row"><span>AI classified as</span><span>${invoice.aiSuggestedCategory} (confidence ${invoice.aiConfidence ?? '—'})</span></div>`
-                : `<div class="status-row"><span>AI classified as</span><span class="empty">AI was not consulted (e.g. blocked before or above the risk threshold)</span></div>`;
-            container.innerHTML = `
-                <div class="status-row"><span>Tracking ID</span><span>${invoice.trackingId ?? ''}</span></div>
-                <div class="status-row"><span>Decision</span>${badge(invoice.status)}</div>
-                <div class="status-row"><span>Decided by</span><span>${invoice.decidedBy ?? '—'}</span></div>
-                <div class="status-row"><span>Reason</span><span>${invoice.reason ?? '—'}</span></div>
-                <div class="status-row"><span>Vendor / Amount</span><span>${invoice.vendor ?? ''} / ${invoice.totalAmount ?? ''}</span></div>
-                <div class="status-row"><span>Category you entered</span><span>${invoice.category || '—'} <em style="color:#999;">(a label only, not what decided this)</em></span></div>
-                ${aiCategoryRow}
-                <div class="status-row"><span>Payment</span>${badge(invoice.paymentStatus)}</div>
-                ${invoice.paymentMessage ? `<div class="status-row"><span>Payment detail</span><span>${invoice.paymentMessage}</span></div>` : ''}
-            `;
-        }
+                    <button type="submit" class="btn-submit">Submit Invoice</button>
+                </form>
+                <div id="submitStatus" class="status-card" style="display:none;"></div>
+            </div>
 
-        // --- Category-driven conditional fields (Meals entertainment / Travel TripId) ---
-        function updateCategoryHints() {
-            const category = document.getElementById('category').value.toLowerCase();
-            document.getElementById('mealsField').classList.toggle('visible', category.includes('meal'));
-            document.getElementById('travelField').classList.toggle('visible', category.includes('travel'));
-        }
-        document.getElementById('category').addEventListener('input', updateCategoryHints);
+            <div class="card">
+                <h2>Known Vendors</h2>
+                <p class="hint">The router recognizes these by name with high confidence. Anything else is classified by keywords in the vendor/notes text instead — and if nothing matches, it defaults to a low-confidence "Other" that escalates rather than guesses.</p>
+                <button id="refreshVendorsBtn" class="btn-secondary">Refresh</button>
+                <div id="vendorsList"></div>
+            </div>
 
-        document.getElementById('isClientEntertainment').addEventListener('change', (e) => {
-            document.getElementById('clientEntertainmentFields').style.display = e.target.checked ? 'block' : 'none';
-        });
+            <div class="card">
+                <h2>Check Status</h2>
+                <p class="hint">See whether an invoice was auto-approved, escalated for human review, rejected, and what happened to its payment.</p>
+                <label>Tracking ID</label>
+                <input id="checkTrackingId" placeholder="INV-..." />
+                <button id="checkStatusBtn" class="btn-secondary">Check Status</button>
+                <div id="checkStatusResult" class="status-card" style="display:none;"></div>
+            </div>
 
-        // --- Line items (GLOBAL-RECEIPT / GLOBAL-MATH: no OCR, the submitter provides
-        // the itemized breakdown directly instead of the AI guessing it) ---
-        function addLineItemRow(description = '', amount = '') {
-            const container = document.getElementById('lineItemsContainer');
-            const row = document.createElement('div');
-            row.className = 'line-item-row';
-            row.innerHTML = `
-                <input type="text" class="line-item-desc" placeholder="Description" value="${description}" />
-                <input type="number" step="0.01" class="line-item-amount" placeholder="0.00" value="${amount}" />
-                <button type="button" class="line-item-remove" title="Remove">×</button>
-            `;
-            row.querySelector('.line-item-remove').addEventListener('click', () => {
-                row.remove();
-                updateLineItemsHint();
-            });
-            row.querySelectorAll('input').forEach(input => input.addEventListener('input', updateLineItemsHint));
-            container.appendChild(row);
-            updateLineItemsHint();
-        }
-        document.getElementById('addLineItemBtn').addEventListener('click', () => addLineItemRow());
+            <div class="card">
+                <h2>Provide More Info</h2>
+                <p class="hint">For submitters responding to a "Send Back for Info" request — fill in only what was missing and re-submit. This does not change the vendor, amount, or category (F5 can't be used to sneak past the ceiling that triggered the review).</p>
+                <label>Tracking ID</label>
+                <input id="infoTrackingId" placeholder="INV-..." />
+                <p id="infoCategoryState" class="hint">Leave this field to look up the invoice and show only the fields relevant to its category.</p>
 
-        function collectLineItems() {
-            return Array.from(document.querySelectorAll('.line-item-row')).map(row => ({
-                Description: row.querySelector('.line-item-desc').value,
-                Amount: parseFloat(row.querySelector('.line-item-amount').value) || 0
-            })).filter(item => item.Description || item.Amount);
-        }
+                <div id="infoMealsField" class="conditional-field">
+                    <label>Business justification <span class="optional">(client entertainment)</span></label>
+                    <input id="infoBusinessJustification" />
+                    <label>Client name <span class="optional">(client entertainment)</span></label>
+                    <input id="infoClientName" />
+                </div>
 
-        function updateLineItemsHint() {
-            const hint = document.getElementById('lineItemsHint');
-            const requiredTag = document.getElementById('lineItemsRequired');
-            const total = parseFloat(document.getElementById('totalAmount').value) || 0;
-            const items = collectLineItems();
-            const itemsSum = items.reduce((sum, i) => sum + i.Amount, 0);
+                <label>Original currency <span class="optional">(foreign-currency items)</span></label>
+                <input id="infoCurrency" />
 
-            requiredTag.style.display = total > 25 ? 'inline' : 'none';
+                <div id="infoTravelField" class="conditional-field">
+                    <label>Trip ID</label>
+                    <input id="infoTripId" />
+                    <label style="margin-top:10px;"><input type="checkbox" id="infoIsPremiumTravel" />First/business class</label>
+                </div>
 
-            if (items.length === 0) {
-                hint.textContent = total > 25
-                    ? 'No line items yet — required for amounts over $25 (GLOBAL-RECEIPT), or this will be escalated.'
-                    : 'No line items yet (optional under $25).';
-                hint.classList.toggle('warn', total > 25);
-                return;
-            }
+                <label>Notes</label>
+                <textarea id="infoNotes" rows="2"></textarea>
+                <label>Itemized breakdown <span class="optional">(receipt / math mismatch)</span></label>
+                <div id="infoLineItemsContainer"></div>
+                <button type="button" id="infoAddLineItemBtn" class="btn-add-line">+ Add line item</button>
+                <button id="provideInfoBtn" class="btn-submit" style="margin-top:15px;">Submit Additional Info</button>
+                <h4>Result</h4>
+                <pre id="provideInfoResult">—</pre>
+            </div>
 
-            const tolerance = Math.min(total * 0.02, 10);
-            const variance = Math.abs(total - itemsSum);
-            const withinTolerance = variance <= tolerance;
-            hint.textContent = `Line items total $${itemsSum.toFixed(2)} vs. invoice total $${total.toFixed(2)}` +
-                (withinTolerance ? ' — OK.' : ` — off by $${variance.toFixed(2)} (allowed: $${tolerance.toFixed(2)}, GLOBAL-MATH).`);
-            hint.classList.toggle('warn', !withinTolerance);
-        }
-        document.getElementById('totalAmount').addEventListener('input', updateLineItemsHint);
+        </div>
+    </section>
 
-        // --- TrackingId (F3): generated client-side and held steady across
-        // retries of the *same* submission attempt, so an accidental double POST
-        // (network retry, browser back-button resubmit, a click that slips past the
-        // disabled button) carries the same id and the Gateway's idempotency check
-        // (ISubmissionStore) actually catches it. Previously the Gateway minted a
-        // fresh GUID server-side whenever the client sent none, so every "accidental"
-        // resubmit looked like a brand-new invoice. A new id is only rotated in once
-        // a submission has been confirmed accepted, so the *next distinct* expense
-        // gets its own id.
-        function generateTrackingId() {
-            return (window.crypto && crypto.randomUUID)
-                ? crypto.randomUUID()
-                : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        }
-        document.getElementById('trackingId').value = generateTrackingId();
+    <section class="role-section" data-role="approver">
+        <h2 class="section-title">Approver</h2>
+        <div class="card-grid">
 
-        // --- Submit + auto-poll ---------------------------------------------
-        document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const submitBtn = e.target.querySelector('.btn-submit');
-            if (submitBtn.disabled) return; // a submit for this click is already in flight
+            <div class="card">
+                <h2>Escalation Queue</h2>
+                <p class="hint">Only items the router could not safely approve on its own.</p>
+                <button id="refreshEscalationsBtn" class="btn-secondary">Refresh</button>
+                <div id="escalationsList"></div>
+            </div>
 
-            const trackingIdField = document.getElementById('trackingId');
-            if (!trackingIdField.value) trackingIdField.value = generateTrackingId(); // safety net
+            <div class="card">
+                <h2>Manual Approval</h2>
+                <label>Tracking ID</label>
+                <input id="manualTrackingId" placeholder="INV-..." />
+                <label>Message <span class="optional">(only used for "Send Back for Info")</span></label>
+                <input id="manualMessage" placeholder="e.g., Please attach an itemized receipt" />
+                <div class="button-row">
+                    <button id="approveBtn" class="btn-approve">Approve</button>
+                    <button id="rejectBtn" class="btn-reject">Reject</button>
+                    <button id="requestInfoBtn" class="btn-secondary">Send Back for Info</button>
+                </div>
+                <h4>Action Result</h4>
+                <pre id="manualResult">—</pre>
+            </div>
 
-            const tripIdValue = document.getElementById('tripId').value;
-            const isClientEntertainment = document.getElementById('isClientEntertainment').checked;
-            const payload = {
-                TrackingId: trackingIdField.value,
-                Vendor: document.getElementById('vendor').value,
-                InvoiceNumber: document.getElementById('invoiceNumber').value || null,
-                TotalAmount: parseFloat(document.getElementById('totalAmount').value),
-                Category: document.getElementById('category').value,
-                Notes: document.getElementById('description').value,
-                Currency: document.getElementById('currency').value || null,
-                TripId: tripIdValue || null,
-                IsPremiumTravel: document.getElementById('isPremiumTravel').checked,
-                IsClientEntertainment: isClientEntertainment,
-                BusinessJustification: isClientEntertainment ? (document.getElementById('businessJustification').value || null) : null,
-                ClientName: isClientEntertainment ? (document.getElementById('clientName').value || null) : null,
-                LineItems: collectLineItems()
-            };
-            const statusBox = document.getElementById('submitStatus');
-            statusBox.style.display = 'block';
-            statusBox.textContent = 'Submitting...';
+            <div class="card">
+                <h2>Audit Trail</h2>
+                <p class="hint">Full decision record for one item — extracted data, AI reasoning, who made the final call, and the payment outcome, all keyed by the tracking id (F9).</p>
+                <label>Tracking ID</label>
+                <input id="auditTrackingId" placeholder="INV-..." />
+                <button id="pullAuditBtn" class="btn-secondary">Pull Audit Trail</button>
+                <pre id="auditResult">—</pre>
+            </div>
 
-            // Only guard the POST itself — an accidental double-click could fire it twice
-            // (F3). Re-enable right after so the submitter can immediately start a
-            // separate, unrelated expense without waiting for this one's status polling.
-            submitBtn.disabled = true;
-            let submitResult;
-            try {
-                submitResult = await callApi('submit', 'POST', payload);
-            } finally {
-                submitBtn.disabled = false;
-            }
-            if (!submitResult.ok || !submitResult.data?.trackingId) {
-                // Deliberately do not rotate trackingIdField.value here: if the submitter
-                // retries after a failure, the retry should carry the same id so the
-                // Gateway can tell it's the same attempt (F3).
-                statusBox.textContent = `Error: HTTP ${submitResult.status}`;
-                return;
-            }
+            <div class="card">
+                <h2>Dashboard</h2>
+                <button id="refreshStatsBtn" class="btn-secondary">Refresh</button>
+                <div id="statsPanel" class="stats-grid"></div>
+            </div>
 
-            const trackingId = submitResult.data.trackingId;
-            statusBox.textContent = `Submitted as ${trackingId}. Waiting for a decision...`;
-            trackingIdField.value = generateTrackingId(); // accepted — next submission gets a fresh id
+        </div>
+    </section>
 
-            // M8: push-based notification instead of polling — this holds one connection
-            // open and the Gateway wakes it up the moment invoice.decided fires (or replies
-            // immediately if the decision already landed). Falls back to "still pending" +
-            // manual Check Status after ~15s, same as the old polling loop did, in case the
-            // connection stalls.
-            const giveUp = setTimeout(() => {
-                source.close();
-                statusBox.textContent = `Submitted as ${trackingId}. Still pending — use "Check Status" below to keep watching.`;
-                document.getElementById('checkTrackingId').value = trackingId;
-            }, 15000);
+    <section class="role-section" data-role="admin">
+        <h2 class="section-title">Admin</h2>
+        <div class="card-grid">
 
-            // EventSource cannot set an Authorization header, so the token travels as an
-            // access_token query parameter — the Gateway's JwtBearer OnMessageReceived
-            // accepts it for /notifications only.
-            const source = new EventSource(`${gatewayBase()}/notifications/${trackingId}?access_token=${encodeURIComponent(authToken ?? '')}`);
-            source.onmessage = async () => {
-                clearTimeout(giveUp);
-                source.close();
-                const { ok, data } = await callApi(`status/${trackingId}`);
-                if (ok) renderStatusCard(statusBox, data);
-            };
-            source.onerror = () => {
-                clearTimeout(giveUp);
-                source.close();
-                statusBox.textContent = `Submitted as ${trackingId}. Connection lost — use "Check Status" below.`;
-                document.getElementById('checkTrackingId').value = trackingId;
-            };
-        });
+            <div class="card">
+                <h2>Manage Users</h2>
 
-        // --- Manual status check ---------------------------------------------
-        document.getElementById('checkStatusBtn').addEventListener('click', async () => {
-            const id = document.getElementById('checkTrackingId').value.trim();
-            const box = document.getElementById('checkStatusResult');
-            if (!id) return;
-            box.style.display = 'block';
-            box.textContent = 'Loading...';
-            const { ok, status, data } = await callApi(`status/${id}`);
-            if (!ok) {
-                box.textContent = `HTTP ${status}: not found.`;
-                return;
-            }
-            renderStatusCard(box, data);
-        });
+                <h3>Add User</h3>
+                <p class="hint">Admin-only. Creates an account directly with whatever role you pick — no self-registration or separate promotion needed.</p>
+                <label>Name</label>
+                <input id="addUserName" placeholder="e.g., Jane Doe" />
+                <label>Email</label>
+                <input id="addUserEmail" type="email" placeholder="user@company.com" />
+                <label>Password</label>
+                <input id="addUserPassword" type="password" placeholder="At least 8 characters" />
+                <label>Role</label>
+                <select id="addUserRole">
+                    <option value="submitter">submitter</option>
+                    <option value="approver">approver</option>
+                    <option value="admin">admin</option>
+                </select>
+                <button id="addUserBtn" class="btn-submit">Add User</button>
+                <h4>Result</h4>
+                <pre id="addUserResult">—</pre>
 
-        // --- Audit trail (F9) ---------------------------------------------
-        document.getElementById('pullAuditBtn').addEventListener('click', async () => {
-            const id = document.getElementById('auditTrackingId').value.trim();
-            const result = document.getElementById('auditResult');
-            if (!id) return;
-            result.textContent = 'Loading...';
-            const { ok, status, data } = await callApi(`audit/${id}`);
-            result.textContent = ok ? JSON.stringify(data, null, 2) : `HTTP ${status}: not found.`;
-        });
+                <h3 class="subsection">Change Role</h3>
+                <p class="hint">Promotes or demotes an already-registered account (e.g. one that self-registered as submitter).</p>
+                <label>Email</label>
+                <input id="setRoleEmail" type="email" placeholder="user@company.com" />
+                <label>New Role</label>
+                <select id="setRoleValue">
+                    <option value="submitter">submitter</option>
+                    <option value="approver">approver</option>
+                    <option value="admin">admin</option>
+                </select>
+                <button id="setRoleBtn" class="btn-submit">Set Role</button>
+                <h4>Result</h4>
+                <pre id="setRoleResult">—</pre>
+            </div>
 
-        // --- Escalation queue ---------------------------------------------
-        async function loadEscalations() {
-            const list = document.getElementById('escalationsList');
-            const { ok, data } = await callApi('escalations');
-            if (!ok || !data || data.length === 0) {
-                list.innerHTML = '<p class="empty">No escalated items right now.</p>';
-                return;
-            }
-            const rows = data.map(item => `
-                <tr>
-                    <td>${item.trackingId}</td>
-                    <td>${item.vendor}</td>
-                    <td>${item.aiSuggestedCategory ?? '<span class="empty">n/a</span>'}${item.aiConfidence ? ` (${item.aiConfidence})` : ''}</td>
-                    <td>${item.totalAmount}</td>
-                    <td>${item.reason}</td>
-                </tr>
-            `).join('');
-            list.innerHTML = `
-                <table>
-                    <thead><tr><th>Tracking ID</th><th>Vendor</th><th>AI Category (confidence)</th><th>Amount</th><th>Reason</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            `;
-        }
-        document.getElementById('refreshEscalationsBtn').addEventListener('click', loadEscalations);
+            <div class="card">
+                <h2>Manage Vendors &amp; Policy</h2>
 
-        // --- Known vendors ---------------------------------------------
-        async function loadVendors() {
-            const list = document.getElementById('vendorsList');
-            const datalist = document.getElementById('knownVendors');
-            const { ok, data } = await callApi('vendors');
-            if (!ok || !data || data.length === 0) {
-                list.innerHTML = '<p class="empty">No known vendors configured.</p>';
-                datalist.innerHTML = '';
-                return;
-            }
-            const rows = data.map(v => `<tr><td>${v.vendor}</td><td>${v.category}</td></tr>`).join('');
-            list.innerHTML = `
-                <table>
-                    <thead><tr><th>Vendor</th><th>Category</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            `;
-            datalist.innerHTML = data.map(v => `<option value="${v.vendor}"></option>`).join('');
-        }
-        document.getElementById('refreshVendorsBtn').addEventListener('click', loadVendors);
+                <h3>Add / Update Vendor</h3>
+                <p class="hint">Admin-only. Adds a vendor to the known-vendor directory, or updates an existing one's category. Takes effect immediately — no restart needed.</p>
+                <label>Vendor</label>
+                <input id="addVendorName" placeholder="e.g., Acme Cloud Co" />
+                <label>Category</label>
+                <input id="addVendorCategory" placeholder="e.g., SaaS, Hardware, Meals, Travel, OfficeSupplies, Marketing" />
+                <button id="addVendorBtn" class="btn-submit">Save Vendor</button>
+                <h4>Result</h4>
+                <pre id="addVendorResult">—</pre>
 
-        // --- Manual approve/reject ---------------------------------------------
-        document.getElementById('approveBtn').addEventListener('click', async () => {
-            const id = document.getElementById('manualTrackingId').value.trim();
-            const { status, data } = await callApi(`approve/${id}`, 'POST');
-            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
-            loadEscalations();
-        });
+                <h3 class="subsection">Edit Policy</h3>
+                <p class="hint">Admin-only. Raw policies.json — thresholds, per-category ceilings and confidence floors. Load, edit, save; picked up by the next invoice, no restart. Must stay valid JSON with "GlobalGuardrails" and "ExpensePolicies" sections.</p>
+                <button id="loadPolicyBtn" class="btn-secondary">Load Current Policy</button>
+                <textarea id="policyEditor" rows="18" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.83em; margin-top:8px;"></textarea>
+                <button id="savePolicyBtn" class="btn-submit" style="margin-top:8px;">Save Policy</button>
+                <h4>Result</h4>
+                <pre id="policyResult">—</pre>
+            </div>
 
-        document.getElementById('rejectBtn').addEventListener('click', async () => {
-            const id = document.getElementById('manualTrackingId').value.trim();
-            const { status, data } = await callApi(`reject/${id}`, 'POST');
-            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
-            loadEscalations();
-        });
+        </div>
+    </section>
 
-        // F5: the third leg of the approver's one-action set — send the item back to the
-        // submitter instead of deciding outright. Drops it out of the escalation queue
-        // until the submitter responds via "Provide More Info" below.
-        document.getElementById('requestInfoBtn').addEventListener('click', async () => {
-            const id = document.getElementById('manualTrackingId').value.trim();
-            const message = document.getElementById('manualMessage').value.trim() || null;
-            const { status, data } = await callApi(`request-info/${id}`, 'POST', { Message: message });
-            document.getElementById('manualResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
-            loadEscalations();
-        });
+</div>
 
-        // --- "Provide More Info" line items (independent of the submit form's) ---
-        function addInfoLineItemRow() {
-            const container = document.getElementById('infoLineItemsContainer');
-            const row = document.createElement('div');
-            row.className = 'line-item-row';
-            row.innerHTML = `
-                <input type="text" class="info-line-item-desc" placeholder="Description" />
-                <input type="number" step="0.01" class="info-line-item-amount" placeholder="0.00" />
-                <button type="button" class="line-item-remove" title="Remove">×</button>
-            `;
-            row.querySelector('.line-item-remove').addEventListener('click', () => row.remove());
-            container.appendChild(row);
-        }
-        document.getElementById('infoAddLineItemBtn').addEventListener('click', addInfoLineItemRow);
-
-        function collectInfoLineItems() {
-            const items = Array.from(document.querySelectorAll('#infoLineItemsContainer .line-item-row')).map(row => ({
-                Description: row.querySelector('.info-line-item-desc').value,
-                Amount: parseFloat(row.querySelector('.info-line-item-amount').value) || 0
-            })).filter(item => item.Description || item.Amount);
-            return items.length > 0 ? items : null; // null = "leave what's already stored"
-        }
-
-        // F5's resume half: only send fields the submitter actually filled in (empty ->
-        // null) so this doesn't blank out data the reviewer didn't ask about.
-        document.getElementById('provideInfoBtn').addEventListener('click', async () => {
-            const id = document.getElementById('infoTrackingId').value.trim();
-            const orNull = (value) => value ? value : null;
-            const payload = {
-                Notes: orNull(document.getElementById('infoNotes').value),
-                LineItems: collectInfoLineItems(),
-                BusinessJustification: orNull(document.getElementById('infoBusinessJustification').value),
-                ClientName: orNull(document.getElementById('infoClientName').value),
-                Currency: orNull(document.getElementById('infoCurrency').value),
-                TripId: orNull(document.getElementById('infoTripId').value),
-                IsPremiumTravel: document.getElementById('infoIsPremiumTravel').checked ? true : null
-            };
-            const { status, data } = await callApi(`provide-info/${id}`, 'POST', payload);
-            document.getElementById('provideInfoResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
-            loadEscalations();
-        });
-
-        // --- Dashboard stats ---------------------------------------------
-        async function loadStats() {
-            const panel = document.getElementById('statsPanel');
-            const { ok, data } = await callApi('stats');
-            if (!ok || !data) {
-                panel.innerHTML = '<p class="empty">Could not load stats.</p>';
-                return;
-            }
-            const boxes = [
-                ['Total submitted', data.totalSubmitted],
-                ['Auto-approved (AI)', data.autoApproved],
-                ['Human-approved', data.humanApproved],
-                ['Escalated (pending)', data.escalatedPending],
-                ['Needs info (pending)', data.needsInfo],
-                ['Rejected', data.rejected],
-                ['Duplicate (rejected)', data.duplicateRejected],
-                ['Auto-approval rate', `${Math.round((data.autoApprovalRate ?? 0) * 100)}%`],
-                ['$ auto-approved', data.autoApprovedAmount],
-                ['$ human-approved', data.humanApprovedAmount],
-            ];
-            panel.innerHTML = boxes.map(([label, value]) => `
-                <div class="stat-box"><div class="n">${value}</div><div class="l">${label}</div></div>
-            `).join('');
-        }
-        document.getElementById('refreshStatsBtn').addEventListener('click', loadStats);
-
-        // Initial load: sign in with the default role first (N1), then the panels load
-        // from inside login() once a token is available.
-        login();
-        updateLineItemsHint();
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>

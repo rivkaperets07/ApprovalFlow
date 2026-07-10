@@ -32,6 +32,13 @@ public class StubAiModelProvider : IAiModelProvider
         ("Marketing", ["ads", "advertising", "campaign", "marketing", "sponsorship"]),
     ];
 
+    private readonly PolicyRetriever _policyRetriever;
+
+    public StubAiModelProvider(PolicyRetriever policyRetriever)
+    {
+        _policyRetriever = policyRetriever;
+    }
+
     public Task<AiAnalysisResult> AnalyzeAsync(InvoicePayload invoice, string category, CancellationToken cancellationToken)
     {
         var haystack = string.Join(" ", new[] { invoice.Notes, invoice.Category }
@@ -58,10 +65,20 @@ public class StubAiModelProvider : IAiModelProvider
             reasoning = $"Notes/line items read like '{matchedCategory}', but the vendor directory lists '{category}' for this vendor — flagged for review.";
         }
 
+        // N5: retrieve only the policy.md rule(s) relevant to this category/notes instead
+        // of reasoning in a vacuum — the Stub provider gets the same RAG treatment as Groq
+        // (PolicyRetriever has no network dependency either way), so CI/tests exercise the
+        // retrieval path without needing an API key.
+        var citedClauses = _policyRetriever.Retrieve(PolicyRetriever.BuildQuery(invoice, category), topK: 2);
+        var citedRuleIds = citedClauses.Select(c => c.RuleId).ToList();
+
         var result = new AiAnalysisResult
         {
             ConfidenceScore = confidence,
-            Reasoning = $"Stub coherence check: {reasoning}"
+            Reasoning = citedRuleIds.Count > 0
+                ? $"Stub coherence check: {reasoning} (considered {string.Join(", ", citedRuleIds)})"
+                : $"Stub coherence check: {reasoning}",
+            PolicyRulesCited = citedRuleIds
         };
 
         if (string.Equals(category, "Travel", StringComparison.OrdinalIgnoreCase))

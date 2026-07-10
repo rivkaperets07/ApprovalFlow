@@ -15,6 +15,7 @@ using Dapr.Client;
 public static class RecentSubmissionGuard
 {
     private const int WindowSeconds = 60;
+    private const int MaxAttempts = 3;
 
     public static string BuildKey(string vendor, decimal total, string? category, string? notes)
     {
@@ -34,12 +35,25 @@ public static class RecentSubmissionGuard
     public static async Task<string?> TryClaimAsync(DaprClient daprClient, string storeName, string vendor, decimal total, string? category, string? notes, string trackingId)
     {
         var key = BuildKey(vendor, total, category, notes);
-        var (existingTrackingId, etag) = await daprClient.GetStateAndETagAsync<string?>(storeName, key);
-        if (!string.IsNullOrEmpty(existingTrackingId))
-            return existingTrackingId;
-
         var metadata = new Dictionary<string, string> { ["ttlInSeconds"] = WindowSeconds.ToString(CultureInfo.InvariantCulture) };
-        await daprClient.TrySaveStateAsync(storeName, key, trackingId, etag, metadata: metadata);
+
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            var (existingTrackingId, etag) = await daprClient.GetStateAndETagAsync<string?>(storeName, key);
+            if (!string.IsNullOrEmpty(existingTrackingId))
+                return existingTrackingId;
+
+            // The TrySaveStateAsync result matters: losing this ETag race means a
+            // concurrent identical submission claimed the key a moment ago — loop back and
+            // read *its* TrackingId instead of letting both through, since two requests
+            // landing in the same instant is exactly the double-click this guard exists for.
+            if (await daprClient.TrySaveStateAsync(storeName, key, trackingId, etag, metadata: metadata))
+                return null;
+        }
+
+        // Attempts exhausted: the key kept changing under us without ever reading back a
+        // claimant (not a pattern a real double-click produces). Treat as fresh — this
+        // guard is a best-effort backstop, and GLOBAL-DUP still covers the exact-match case.
         return null;
     }
 }

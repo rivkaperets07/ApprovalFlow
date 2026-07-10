@@ -17,3 +17,20 @@ spec:
   # deliberately shares invoice records across services, so prefixing must be off.
   - name: keyPrefix
     value: "none"
+  # N3: outbox pattern. A plain SaveStateAsync followed by a separate PublishEventAsync
+  # (the pre-N3 shape) can save an invoice's decision and then crash before the event
+  # fires — the state says Approved/Escalated forever, but nobody downstream ever finds
+  # out (the Gateway's escalation index goes stale, SSE listeners never wake up). With
+  # this configured, an ExecuteStateTransactionAsync call against "statestore" both writes
+  # the state *and* publishes it to outboxPublishTopic atomically — Dapr guarantees the
+  # event fires if and only if the write commits. Used by DecisionEngine's automatic
+  # decision path and the Gateway's manual approve/reject/request-info actions (see
+  # docs/adr/005-outbox-and-bulkhead.md) instead of a bare SaveStateAsync + PublishEventAsync
+  # pair. outboxPublishTopic reuses the existing "invoice.decided" topic name — the one
+  # subscriber (PubSubHandlers.HandleInvoiceDecidedIndexAsync) only reads TrackingId off
+  # the event and re-fetches the real invoice for everything else, so publishing the state
+  # item itself (instead of the smaller DecisionResult DTO) as the event body is safe.
+  - name: outboxPublishPubsub
+    value: "pubsub"
+  - name: outboxPublishTopic
+    value: "invoice.decided"

@@ -10,6 +10,8 @@ public class RecentSubmissionGuardTests
         var daprMock = new Mock<DaprClient>();
         daprMock.Setup(c => c.GetStateAndETagAsync<string?>("statestore", It.IsAny<string>(), null, null, default))
             .ReturnsAsync(((string?)null, ""));
+        daprMock.Setup(c => c.TrySaveStateAsync("statestore", It.IsAny<string>(), "TRK-1", "", null, It.IsAny<IReadOnlyDictionary<string, string>>(), default))
+            .ReturnsAsync(true);
 
         var result = await RecentSubmissionGuard.TryClaimAsync(daprMock.Object, "statestore", "CloudSoft Inc", 350m, "SaaS", "Monthly renewal", "TRK-1");
 
@@ -18,6 +20,25 @@ public class RecentSubmissionGuardTests
             c => c.TrySaveStateAsync("statestore", RecentSubmissionGuard.BuildKey("CloudSoft Inc", 350m, "SaaS", "Monthly renewal"), "TRK-1", "", null,
                 It.Is<IReadOnlyDictionary<string, string>>(m => m["ttlInSeconds"] == "60"), default),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task LosingTheClaimRace_ReturnsTheWinnersTrackingId()
+    {
+        // Two identical submissions land at the same instant: both read "unclaimed", only
+        // one ETag write wins. The loser must re-read and short-circuit on the winner's
+        // TrackingId — not proceed as if its claim had succeeded (the old behavior, which
+        // ignored the TrySaveStateAsync result and let both through).
+        var daprMock = new Mock<DaprClient>();
+        daprMock.SetupSequence(c => c.GetStateAndETagAsync<string?>("statestore", It.IsAny<string>(), null, null, default))
+            .ReturnsAsync(((string?)null, ""))
+            .ReturnsAsync(("TRK-1", "etag-1"));
+        daprMock.Setup(c => c.TrySaveStateAsync("statestore", It.IsAny<string>(), "TRK-2", "", null, It.IsAny<IReadOnlyDictionary<string, string>>(), default))
+            .ReturnsAsync(false);
+
+        var result = await RecentSubmissionGuard.TryClaimAsync(daprMock.Object, "statestore", "CloudSoft Inc", 350m, "SaaS", "Monthly renewal", "TRK-2");
+
+        Assert.Equal("TRK-1", result);
     }
 
     [Fact]

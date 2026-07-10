@@ -4,17 +4,16 @@ using Xunit;
 
 public class PaymentProcessorTests
 {
+    private static PaymentProcessor Processor(IPaymentGateway gateway)
+        => new(new BudgetService(), gateway, new InMemoryPaymentStateStore(), NullLogger<PaymentProcessor>.Instance);
+
     [Fact]
     public async Task SuccessfulPayment_IsProcessed()
     {
-        var budget = new BudgetService();
-        var gateway = new PaymentGateway();
-        var processor = new PaymentProcessor(budget, gateway);
-        var logger = NullLogger.Instance;
-
+        var processor = Processor(new PaymentGateway());
         var invoice = new InvoicePayload { TrackingId = "TST-01", Vendor = "ACME", TotalAmount = 100m, Category = "IT" };
 
-        var result = await processor.ProcessAsync(invoice, logger);
+        var result = await processor.ProcessAsync(invoice);
 
         Assert.True(result.Success);
         Assert.Equal("Payment completed successfully.", result.Message);
@@ -23,15 +22,11 @@ public class PaymentProcessorTests
     [Fact]
     public async Task DuplicatePayment_IsIgnored()
     {
-        var budget = new BudgetService();
-        var gateway = new PaymentGateway();
-        var processor = new PaymentProcessor(budget, gateway);
-        var logger = NullLogger.Instance;
-
+        var processor = Processor(new PaymentGateway());
         var invoice = new InvoicePayload { TrackingId = "TST-02", Vendor = "ACME", TotalAmount = 50m, Category = "Ops" };
 
-        var first = await processor.ProcessAsync(invoice, logger);
-        var second = await processor.ProcessAsync(invoice, logger);
+        var first = await processor.ProcessAsync(invoice);
+        var second = await processor.ProcessAsync(invoice);
 
         Assert.True(first.Success);
         Assert.False(second.Success);
@@ -41,14 +36,10 @@ public class PaymentProcessorTests
     [Fact]
     public async Task FailedPayment_ReleasesBudget()
     {
-        var budget = new BudgetService();
-        var failing = new FailingGateway();
-        var processor = new PaymentProcessor(budget, failing);
-        var logger = NullLogger.Instance;
-
+        var processor = Processor(new FailingGateway());
         var invoice = new InvoicePayload { TrackingId = "TST-03", Vendor = "BadVendor", TotalAmount = 75m, Category = "Ops" };
 
-        var result = await processor.ProcessAsync(invoice, logger);
+        var result = await processor.ProcessAsync(invoice);
 
         Assert.False(result.Success);
         Assert.Equal("Payment failed. Reserved budget released.", result.Message);
@@ -60,15 +51,11 @@ public class PaymentProcessorTests
         // A failed payment must not be permanently locked out: only a *completed*
         // payment should dedupe. The claim taken during processing must be released
         // even when the gateway fails, so a legitimate retry can go through.
-        var budget = new BudgetService();
-        var gateway = new FlakyGateway(failuresBeforeSuccess: 1);
-        var processor = new PaymentProcessor(budget, gateway);
-        var logger = NullLogger.Instance;
-
+        var processor = Processor(new FlakyGateway(failuresBeforeSuccess: 1));
         var invoice = new InvoicePayload { TrackingId = "TST-04", Vendor = "ACME", TotalAmount = 60m, Category = "Ops" };
 
-        var first = await processor.ProcessAsync(invoice, logger);
-        var retry = await processor.ProcessAsync(invoice, logger);
+        var first = await processor.ProcessAsync(invoice);
+        var retry = await processor.ProcessAsync(invoice);
 
         Assert.False(first.Success);
         Assert.Equal("Payment failed. Reserved budget released.", first.Message);
@@ -83,16 +70,13 @@ public class PaymentProcessorTests
         // two deliveries of the same "invoice.approved" event can arrive concurrently.
         // Before the fix, both could pass a check-then-act "processed" lookup and both
         // pay. The atomic claim must let exactly one of them through.
-        var budget = new BudgetService();
-        var gateway = new DelayedGateway();
-        var processor = new PaymentProcessor(budget, gateway);
-        var logger = NullLogger.Instance;
+        var processor = Processor(new DelayedGateway());
 
         var invoice1 = new InvoicePayload { TrackingId = "TST-05", Vendor = "ACME", TotalAmount = 40m, Category = "Ops" };
         var invoice2 = new InvoicePayload { TrackingId = "TST-05", Vendor = "ACME", TotalAmount = 40m, Category = "Ops" };
 
-        var task1 = processor.ProcessAsync(invoice1, logger);
-        var task2 = processor.ProcessAsync(invoice2, logger);
+        var task1 = processor.ProcessAsync(invoice1);
+        var task2 = processor.ProcessAsync(invoice2);
         var results = await Task.WhenAll(task1, task2);
 
         Assert.Single(results, r => r.Success);

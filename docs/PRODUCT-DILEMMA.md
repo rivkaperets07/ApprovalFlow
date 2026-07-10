@@ -161,6 +161,17 @@ tells the LLM the category up front and asks it to judge coherence instead of cl
   in most branches (added for the flat categories in this pass — `SAAS-01`, `HW-01`,
   `MEAL-01`), but it's still a string an auditor greps rather than a queryable `List<string>`
   of rule ids on the decision.
+- **No document verification (by design, not oversight)** — the assignment states "No OCR
+  required for invoices/expenses," so every field (`Vendor`, `TotalAmount`, `LineItems`,
+  `TripId`, `InvoiceNumber`...) is submitter-typed text, never checked against an actual
+  invoice image. Nothing stops a submitter from inventing numbers wholesale. This is why the
+  system's real defenses (`TrackingId` idempotency, `RecentSubmissionGuard`, the global
+  guardrails above) are built to not depend on any typed field being true — see the
+  `GLOBAL-DUP` caveat. A real fix — photo/receipt upload, OCR extraction, and an
+  auto-`NeedsInfo` when the image doesn't match or isn't legible — would close this gap
+  properly, but it's a genuine scope change from the assignment's current boundary, not a
+  small addition: new upload surface, an OCR/vision provider, a decision on what gets
+  verified against what, and how a failed read is distinguished from a failed policy check.
 
 ## Tuning without redeploy
 

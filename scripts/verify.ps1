@@ -22,8 +22,8 @@ $ErrorActionPreference = "Stop"
 $failures = 0
 
 # N1: every Gateway endpoint now requires a role; admin covers the whole surface, so the
-# verification run uses one admin token for all calls.
-$tokenResponse = Invoke-RestMethod -Uri "$GatewayUrl/token" -Method Post -ContentType 'application/json' -Body '{"Role":"admin","Name":"verify-script"}'
+# verification run logs in as the seeded demo admin account (DemoUserSeeder) for all calls.
+$tokenResponse = Invoke-RestMethod -Uri "$GatewayUrl/login" -Method Post -ContentType 'application/json' -Body '{"Email":"admin@zionet.demo","Password":"Admin123!"}'
 $AuthHeaders = @{ Authorization = "Bearer $($tokenResponse.token)" }
 
 function Write-Result([string]$Name, [bool]$Passed, [string]$Detail = "") {

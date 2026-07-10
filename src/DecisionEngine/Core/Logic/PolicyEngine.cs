@@ -11,8 +11,6 @@ namespace DecisionEngine.Core.Logic;
 /// </summary>
 public class PolicyEngine
 {
-    private const string StateStoreName = "statestore";
-
     private readonly IConfiguration _config;
     private readonly DaprClient _daprClient;
 
@@ -41,7 +39,7 @@ public class PolicyEngine
     /// Null only if a caller skips the guardrail check first (defense in depth).
     /// </summary>
     public string? ResolveVendorCategory(string vendor)
-        => _config["VendorDirectory:" + vendor.Trim()];
+        => _config[$"{VendorDirectory.SectionName}:{vendor.Trim()}"];
 
     public async Task<RouterDecision> EvaluateAsync(InvoicePayload invoice, string category, AiAnalysisResult aiResult)
     {
@@ -77,10 +75,11 @@ public class PolicyEngine
     private GlobalGuardrailsConfig LoadGuardrails()
         => _config.GetSection("GlobalGuardrails").Get<GlobalGuardrailsConfig>() ?? new GlobalGuardrailsConfig();
 
+    // Shared with the Gateway's GLOBAL-FRAUD check via VendorDirectory (Shared.Contracts):
+    // both guardrails must agree on what "known vendor" means, or one can call a vendor
+    // brand-new while the other trusts it.
     private IReadOnlySet<string> LoadKnownVendors()
-        => _config.GetSection("VendorDirectory").GetChildren()
-            .Select(entry => entry.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        => VendorDirectory.LoadKnownVendors(_config);
 
     private static RouterDecision? CheckGlobalGuardrails(InvoicePayload invoice, GlobalGuardrailsConfig guardrails, IReadOnlySet<string> knownVendors)
     {
@@ -193,7 +192,7 @@ public class PolicyEngine
             return RouterDecision.Escalated($"{invoice.TotalAmount:C} exceeds the {perDiem:C} daily travel allowance.");
 
         var tripKey = $"trip-{aiResult.LinkedTripId}-total";
-        var priorTotal = await _daprClient.GetStateAsync<decimal?>(StateStoreName, tripKey) ?? 0m;
+        var priorTotal = await _daprClient.GetStateAsync<decimal?>(DaprComponents.StateStore, tripKey) ?? 0m;
         var tripCap = policy.TripCap ?? 0m;
         var newTotal = priorTotal + invoice.TotalAmount;
 
@@ -201,7 +200,7 @@ public class PolicyEngine
             return RouterDecision.Escalated($"Trip {aiResult.LinkedTripId} cumulative total {newTotal:C} would exceed the {tripCap:C} trip cap ({priorTotal:C} already used).");
 
         // Only persist the reservation once the invoice is actually approved.
-        await _daprClient.SaveStateAsync(StateStoreName, tripKey, newTotal);
+        await _daprClient.SaveStateAsync(DaprComponents.StateStore, tripKey, newTotal);
         return RouterDecision.Approved($"Within the {perDiem:C}/day allowance; trip {aiResult.LinkedTripId} now at {newTotal:C} of {tripCap:C}.");
     }
 }

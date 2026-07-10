@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,7 +17,9 @@ var builder = WebApplication.CreateBuilder(args);
 // placeholders every business log call uses) instead of the default human-readable text
 // formatter, so a request can actually be filtered/followed end-to-end by tooling.
 builder.Logging.ClearProviders();
-builder.Logging.AddJsonConsole();
+// IncludeScopes: every handler opens a BeginScope(CorrelationId) — without this the
+// scope's fields are computed and then silently dropped, defeating M14's whole point.
+builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 
 // GLOBAL-FRAUD's "brand-new vendor" signal needs the same known-vendor list DecisionEngine
 // uses for classification. Bind-mounted (see docker-compose.yml) and shared as config
@@ -30,6 +35,15 @@ builder.Services.AddDaprClient(client => client.UseHttpEndpoint(daprHttpEndpoint
 builder.Services.AddSingleton<IDaprStateClient, DaprStateClient>();
 builder.Services.AddSingleton<ISubmissionStore, DaprSubmissionStore>();
 builder.Services.AddSingleton<IInvoiceNotifier, InvoiceNotifier>();
+builder.Services.AddSingleton<IUserStore, DaprUserStore>();
+
+// N3: bulkhead around every Gateway call into DecisionEngine (vendor directory reads/
+// writes, policy reads/writes) — isolates that one dependency so it being slow or down
+// can't exhaust Gateway's own thread/connection pool and take unrelated requests with it.
+// A shared cap across all of AdminEndpoints/SubmissionEndpoints' DecisionEngine calls
+// rather than one bulkhead per endpoint: they all funnel into the same downstream
+// dependency, so that's the actual resource being protected.
+builder.Services.AddSingleton(new Bulkhead(maxConcurrentCalls: 10));
 
 builder.Services.AddCors(options =>
 {
@@ -51,13 +65,14 @@ builder.Services.AddCors(options =>
 // crash the JWT middleware on every request (IDX10703, zero-length key).
 var configuredJwtKey = builder.Configuration.GetValue<string>("JWT_SIGNING_KEY");
 var jwtSigningKey = string.IsNullOrWhiteSpace(configuredJwtKey) ? "approvalflow-demo-signing-key-32ch!" : configuredJwtKey;
+builder.Services.AddSingleton(new JwtSigningKey(jwtSigningKey));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidIssuer = DemoTokenIssuer.Issuer,
-            ValidAudience = DemoTokenIssuer.Audience,
+            ValidIssuer = JwtTokenIssuer.Issuer,
+            ValidAudience = JwtTokenIssuer.Audience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
             ValidateIssuer = true,
             ValidateAudience = true,
@@ -87,6 +102,7 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy(AuthPolicies.Submitter, policy => policy.RequireRole("submitter", "admin"));
     options.AddPolicy(AuthPolicies.Approver, policy => policy.RequireRole("approver", "admin"));
+    options.AddPolicy(AuthPolicies.Admin, policy => policy.RequireRole("admin"));
 });
 
 // Gateway is the single external entry point (M6), so rate limiting lives here: per-client
@@ -105,7 +121,35 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+// N4: traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).
+// AddGrpcClientInstrumentation covers every DaprClient call (state, pub/sub, service
+// invocation to DecisionEngine) since Dapr's .NET SDK talks gRPC to the sidecar — so a
+// submit that fans out into DecisionEngine and PaymentService shows up as one connected
+// trace, not three separate ones, as long as the receiving side is instrumented too
+// (it is — same block in DecisionEngine.cs/PaymentService.cs).
+var otlpEndpoint = builder.Configuration.GetValue<string>("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317")!;
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(serviceName: "gateway"))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddGrpcClientInstrumentation()
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddPrometheusExporter());
+
 var app = builder.Build();
+
+// Idempotent: only creates accounts that don't already exist yet, so this runs safely on
+// every restart (see DemoUserSeeder for the credentials). Deferred to ApplicationStarted
+// rather than awaited here: the Dapr sidecar doesn't finish initializing until it detects
+// this app accepting connections, which only happens once app.Run() below actually starts
+// Kestrel — awaiting the seed here would block app.Run() and deadlock against the very
+// sidecar readiness it's waiting on.
+app.Lifetime.ApplicationStarted.Register(() =>
+    _ = DemoUserSeeder.SeedAsync(app.Services.GetRequiredService<IUserStore>(), app.Logger));
 
 app.UseCors();
 app.UseRateLimiter();
@@ -116,21 +160,12 @@ app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "ApprovalFlo
 app.UseCloudEvents();
 app.MapSubscribeHandler();
 
-// N1: demo token issuance — anonymous by design (it IS the login). No password check on
-// purpose: the demo demonstrates role-based authorization wiring, not identity management.
-app.MapPost("/token", (TokenRequest request) =>
-{
-    var role = request.Role?.Trim().ToLowerInvariant() ?? "";
-    if (!DemoTokenIssuer.ValidRoles.Contains(role))
-    {
-        return Results.BadRequest(new { error = $"Role must be one of: {string.Join(", ", DemoTokenIssuer.ValidRoles)}." });
-    }
-
-    var token = DemoTokenIssuer.IssueToken(role, string.IsNullOrWhiteSpace(request.Name) ? "demo-user" : request.Name!, jwtSigningKey);
-    return Results.Ok(new { token, role });
-});
+// N1: real credential-based sign-in — register an account, then log in with it. See
+// AuthEndpoints for why this replaced the earlier no-password /token.
+app.MapAuthEndpoints();
 
 app.MapGatewayEndpoints();
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapPrometheusScrapingEndpoint(); // N4: GET /metrics
 
 app.Run();

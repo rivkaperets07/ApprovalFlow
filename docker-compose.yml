@@ -14,6 +14,37 @@
     networks:
       - approval-flow-network
 
+  # N4: OpenTelemetry backend. Jaeger's all-in-one image accepts OTLP directly (gRPC on
+  # 4317, HTTP on 4318 — no separate OTel Collector needed) and serves its own UI, so this
+  # one container is both the trace ingest and the place to look at the result
+  # (http://localhost:16686). Free, local, no license — same "runs free and local"
+  # constraint the rest of the stack already follows.
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - approval-flow-network
+
+  # N4: metrics backend. Scrapes each app's OpenTelemetry Prometheus exporter (GET
+  # /metrics — see the AddPrometheusExporter() call in each service's Program.cs) on its
+  # own schedule rather than the apps pushing, so a Prometheus outage never blocks a
+  # request the way a synchronous push could.
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      # Directory mount, not a single-file one — this stack learned that lesson the hard
+      # way earlier (vendor-directory.json): a single-file bind mount is itself a mount
+      # point, and on Docker Desktop/WSL2/Hyper-V a container referencing one can get stuck
+      # un-killably "Created". Mounting the whole (single-file) directory sidesteps it.
+      - ./observability:/etc/prometheus:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - approval-flow-network
+
   gateway:
     build:
       context: ./src
@@ -23,16 +54,20 @@
       # N1: HMAC key for the self-signed demo JWTs. Empty falls back to the checked-in
       # demo default (fine locally; override in .env for anything shared).
       - JWT_SIGNING_KEY=${JWT_SIGNING_KEY:-}
+      # N4: OTLP trace export target — Jaeger's gRPC receiver, same compose network.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     ports:
       - "5000:8080"
     depends_on:
       - redis
+      - jaeger
     volumes:
       - ./components:/components
       # Same known-vendor list DecisionEngine uses, shared as config (not a runtime call)
       # so GLOBAL-FRAUD's "brand-new vendor" check works without depending on another
-      # service being up (see GatewayService.cs).
-      - ./src/DecisionEngine/Ai/vendor-directory.json:/app/Ai/vendor-directory.json:ro
+      # service being up (see GatewayService.cs). Directory mount, not a single-file one —
+      # see the decision-engine service below for why that matters.
+      - ./src/DecisionEngine/Ai:/app/Ai:ro
     networks:
       - approval-flow-network
 
@@ -43,13 +78,28 @@
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
       - AiProvider=${AI_PROVIDER:-Stub}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
       - redis
+      - jaeger
     volumes:
       - ./components:/components
       # Bind-mounted (not baked into the image) so policy thresholds can be edited
       # and picked up live via reloadOnChange, without rebuilding/redeploying (F7, M13).
       - ./src/DecisionEngine/Policies:/app/Policies
+      # Same story, writable (not :ro like the Gateway's copy above): admin's
+      # POST /vendors writes here, and reloadOnChange picks it up on the next
+      # evaluation with no restart. A directory mount, not a single-file one: POST
+      # /vendors writes atomically (temp file + rename — see AtomicFileWriter), and a
+      # rename can't replace a file that is itself a bind-mount point (EBUSY) — only a
+      # directory mount lets a rename land inside it.
+      - ./src/DecisionEngine/Ai:/app/Ai
+      # N5: RAG source document — outside src/ (this service's build context), so it can
+      # only reach the container via a mount, never a Dockerfile COPY. Directory mount for
+      # the same Docker Desktop/WSL2 reliability reasons as Ai/ above; read-only, since
+      # PolicyRetriever only ever reads it (there's no admin-write endpoint for policy.md
+      # the way there is for policies.json/vendor-directory.json).
+      - ./docs:/app/docs:ro
     networks:
       - approval-flow-network
 
@@ -59,8 +109,10 @@
       dockerfile: PaymentService/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
       - redis
+      - jaeger
     volumes:
       - ./components:/components
     networks:
@@ -108,6 +160,12 @@
       - "8080:80"
     depends_on:
       - gateway
+    volumes:
+      # Static HTML/JS, no compile step — bind-mount the whole directory over the image's
+      # copy so editing index.html and refreshing the browser is enough; no rebuild needed
+      # for UI changes. A directory mount (not a single-file one) for Docker Desktop/WSL2
+      # reliability on Windows.
+      - ./src/UI:/usr/share/nginx/html:ro
     networks:
       - approval-flow-network
 

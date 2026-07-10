@@ -7,4 +7,10 @@
     <RootNamespace>ApprovalFlow.Contracts</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Abstractions only (no binder, no providers): just enough for VendorDirectory to
+         read the shared config section the same way in every service. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
 </Project>

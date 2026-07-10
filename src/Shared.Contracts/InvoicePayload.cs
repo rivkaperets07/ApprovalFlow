@@ -29,6 +29,12 @@ public class InvoicePayload
     public string? AiSuggestedCategory { get; set; }
     public double? AiConfidence { get; set; }
 
+    /// <summary>N5: docs/policy.md rule_ids the AI's coherence check actually retrieved and
+    /// cited (PolicyRetriever — RAG over the policy document, not the whole file in every
+    /// prompt). Answers F4's "the policy rules it cited" directly; null/empty when the AI
+    /// was never consulted, same as AiSuggestedCategory above.</summary>
+    public List<string>? AiPolicyRulesCited { get; set; }
+
     // Structured fact the submitter provides directly (no OCR per the assignment) — always
     // takes precedence over anything the AI might otherwise guess from free-text Notes.
     public string? TripId { get; set; }
@@ -51,6 +57,14 @@ public class InvoicePayload
     // explicit flag rather than parsing free text, consistent with every other structured
     // fact on this payload.
     public bool IsPremiumTravel { get; set; }
+
+    // Idempotency discriminator for invoice.submitted deliveries (Dapr pub/sub is
+    // at-least-once): the Gateway stamps a fresh value on every *deliberate* publish — the
+    // first submission, and each provide-info re-evaluation — so DecisionEngine can tell a
+    // redelivered event (same id: skip, don't re-run the AI or re-increment trip totals)
+    // from a genuine re-evaluation (new id: process). Nullable so older/foreign events
+    // still deserialize; DecisionEngine falls back to TrackingId for those.
+    public string? SubmissionAttemptId { get; set; }
 
     // GLOBAL-DUP (docs/policy.md): optional, submitter-typed. When present, a repeat of the
     // same Vendor + InvoiceNumber + TotalAmount is rejected outright as a duplicate. Not

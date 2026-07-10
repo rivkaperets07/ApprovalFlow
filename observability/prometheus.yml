@@ -1,0 +1,23 @@
+# N4: scrapes the OpenTelemetry Prometheus exporter each service exposes at GET /metrics
+# (AddPrometheusExporter() in GatewayService.cs / DecisionEngine.cs / PaymentService.cs).
+# Targets use the compose service name on its container-internal port 8080 — reachable
+# from Prometheus over approval-flow-network even for services (decision-engine,
+# payment-service) that don't publish 8080 to the host.
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8080"]
+
+  - job_name: decision-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["decision-engine:8080"]
+
+  - job_name: payment-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["payment-service:8080"]

@@ -29,3 +29,103 @@ jobs:
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
+
+  # N6: third test tier, on top of the unit (dotnet test above) and integration
+  # (GatewayService.IntegrationTests, part of the same dotnet test run) tiers — the four
+  # worked journeys and both anti-cheese guards (D5), run against the real
+  # `docker compose up` stack instead of anything mocked. Gated on build-and-test passing
+  # first so a cheap failure never pays for a Docker build.
+  e2e:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start the stack
+        run: docker compose up -d --build
+
+      # /health only proves Kestrel is listening; verify.ps1's first call is /login, which
+      # additionally needs the gateway-sidecar attached and DemoUserSeeder's background
+      # seeding done — so wait on the real login call verify.ps1 will make, not just /health.
+      - name: Wait for Gateway and seeded demo accounts
+        run: |
+          for i in $(seq 1 60); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5000/login \
+              -H "Content-Type: application/json" \
+              -d '{"Email":"admin@zionet.demo","Password":"Admin123!"}')
+            if [ "$status" = "200" ]; then
+              echo "Gateway ready (admin login succeeded)."
+              exit 0
+            fi
+            echo "Not ready yet (HTTP $status), retrying..."
+            sleep 3
+          done
+          echo "Gateway did not become ready in time."
+          docker compose logs
+          exit 1
+
+      - name: Run worked journeys + anti-cheese guards (D5)
+        shell: pwsh
+        run: ./scripts/verify.ps1
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
+
+  # N2: CD stage. Runs only after build-and-test is green, and only for a push to main
+  # (never on a PR) — so a red quality gate or an unmerged branch can never publish an
+  # image. Pushes to GHCR under this repo: no paid registry, no extra secret to configure
+  # — GITHUB_TOKEN already has package-write scope for the repo it runs in.
+  publish:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - image: gateway
+            context: src
+            dockerfile: src/GatewayService/Dockerfile
+          - image: decision-engine
+            context: src
+            dockerfile: src/DecisionEngine/Dockerfile
+          - image: payment-service
+            context: src
+            dockerfile: src/PaymentService/Dockerfile
+          - image: ui
+            context: src/UI
+            dockerfile: src/UI/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR image names must be lowercase; the repo itself (Zionet-ApprovalFlow) is not.
+      - name: Compute lowercase repository name
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo.outputs.name }}-${{ matrix.image }}:latest
+            ghcr.io/${{ steps.repo.outputs.name }}-${{ matrix.image }}:${{ github.sha }}

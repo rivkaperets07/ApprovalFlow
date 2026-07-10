@@ -37,7 +37,7 @@ public class DaprStateClient : IDaprStateClient
 
 public static class GatewayStateKeys
 {
-    public const string StateStoreName = "statestore";
+    public const string StateStoreName = DaprComponents.StateStore;
 
     public static string GetSubmittedKey(string trackingId) => $"invoice-{trackingId}-submitted";
 }
@@ -53,13 +53,11 @@ public class DaprSubmissionStore : ISubmissionStore
 
     public Task<bool> HasBeenSubmittedAsync(string trackingId)
     {
-        return _daprClient.GetStateAsync<bool>(GatewayStateKeys.StateStoreName, GetSubmittedKey(trackingId), null, null, CancellationToken.None);
+        return _daprClient.GetStateAsync<bool>(GatewayStateKeys.StateStoreName, GatewayStateKeys.GetSubmittedKey(trackingId), null, null, CancellationToken.None);
     }
 
     public Task MarkSubmittedAsync(string trackingId)
     {
-        return _daprClient.SaveStateAsync(GatewayStateKeys.StateStoreName, GetSubmittedKey(trackingId), true, null, null, CancellationToken.None);
+        return _daprClient.SaveStateAsync(GatewayStateKeys.StateStoreName, GatewayStateKeys.GetSubmittedKey(trackingId), true, null, null, CancellationToken.None);
     }
-
-    private static string GetSubmittedKey(string trackingId) => GatewayStateKeys.GetSubmittedKey(trackingId);
 }
