@@ -2,7 +2,7 @@ using System.Globalization;
 using Dapr.Client;
 
 /// <summary>
-/// M10 backstop for accidental duplicate submissions that don't reuse the same TrackingId
+/// Backstop for accidental duplicate submissions that don't reuse the same TrackingId
 /// and don't supply an InvoiceNumber (so neither the TrackingId check nor GLOBAL-DUP catches
 /// them) — e.g. an API client that mints a fresh TrackingId per call, or a genuine
 /// double-click that slips past the UI's button-disable guard. Keys on content (Vendor +

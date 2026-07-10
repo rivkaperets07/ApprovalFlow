@@ -38,8 +38,8 @@ public static class PaymentEndpoints
         // which class logs it, without threading it through ProcessAsync's signature.
         using var _ = logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = invoice.TrackingId });
 
-        // N4: this request's span is the last leg of the distributed trace that started
-        // with Gateway's /submit — tagging it with the same id logs already carry (M14)
+        // This request's span is the last leg of the distributed trace that started
+        // with Gateway's /submit — tagging it with the same id logs already carry
         // means the whole chain, start to finish, is one searchable trace in Jaeger.
         Activity.Current?.SetTag("correlation_id", invoice.TrackingId);
 
@@ -47,7 +47,7 @@ public static class PaymentEndpoints
 
         var result = await paymentProcessor.ProcessAsync(invoice);
 
-        // Surface the payment outcome back to the Gateway (F2, F9): without this, a failed
+        // Surface the payment outcome back to the Gateway: without this, a failed
         // or compensated payment would be invisible to anyone polling /status.
         await daprClient.PublishEventAsync(DaprComponents.PubSub, Topics.PaymentCompleted, result);
 

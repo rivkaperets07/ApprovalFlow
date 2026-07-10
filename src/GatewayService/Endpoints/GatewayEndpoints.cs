@@ -12,7 +12,7 @@ public static class GatewayEndpoints
 {
     public static void MapGatewayEndpoints(this WebApplication app)
     {
-        // N1 role map. Submitter surface: drive your own submission through its lifecycle.
+        // Submitter surface: drive your own submission through its lifecycle.
         app.MapSubmissionEndpoints();
 
         // Approver/controller/auditor surface: the escalation queue, decisions, and the
@@ -24,8 +24,8 @@ public static class GatewayEndpoints
         app.MapAdminEndpoints();
 
         // Dapr sidecar deliveries — anonymous on purpose: the sidecar carries no JWT, and
-        // these routes are only reachable inside the compose network (M6, single published
-        // port notwithstanding, they're not part of the public API surface).
+        // these routes are only reachable inside the compose network — a single published
+        // port notwithstanding, they're not part of the public API surface.
         app.MapPubSubHandlers();
     }
 }

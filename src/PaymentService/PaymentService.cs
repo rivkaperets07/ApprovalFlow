@@ -14,12 +14,12 @@ CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// M14: structured (JSON) logging instead of the default plain-text console formatter, so
+// Structured (JSON) logging instead of the default plain-text console formatter, so
 // every business log line's CorrelationId/TrackingId fields are machine-filterable.
 builder.Logging.ClearProviders();
 // IncludeScopes: ProcessPaymentAsync/PaymentProcessor open a BeginScope(CorrelationId) —
 // without this the scope's fields are computed and then silently dropped, defeating
-// M14's point.
+// the whole point of structured logging.
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 
 var daprHttpEndpoint = builder.Configuration.GetValue<string>("DAPR_HTTP_ENDPOINT", "http://localhost:3500");
@@ -31,7 +31,7 @@ builder.Services.AddSingleton<IPaymentProcessor, PaymentProcessor>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "ApprovalFlow PaymentService", Version = "v1" }));
 
-// N4: traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).
+// Traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).
 // See GatewayService.cs for why AddGrpcClientInstrumentation matters here too — this is
 // the tail end of the invoice.approved -> payment.completed chain, and needs to be
 // instrumented for that whole chain to land in one trace instead of stopping short.
@@ -57,6 +57,6 @@ app.MapSubscribeHandler();
 
 app.MapPaymentEndpoints();
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
-app.MapPrometheusScrapingEndpoint(); // N4: GET /metrics
+app.MapPrometheusScrapingEndpoint(); // GET /metrics
 
 app.Run();

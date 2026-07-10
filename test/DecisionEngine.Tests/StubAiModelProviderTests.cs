@@ -4,7 +4,7 @@ public class StubAiModelProviderTests
 {
     // A small, self-contained sample instead of loading the real docs/policy.md: these
     // tests are about StubAiModelProvider's own coherence-scoring logic, not retrieval
-    // (that's PolicyRetrieverTests' job) — this only needs enough clauses that N5's
+    // (that's PolicyRetrieverTests' job) — this only needs enough clauses that the
     // citation behavior has something to find.
     private static readonly PolicyRetriever TestPolicyRetriever = new(PolicyRetriever.ParsePolicyMarkdown("""
         ## 3. Software / SaaS

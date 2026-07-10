@@ -4,7 +4,7 @@ namespace DecisionEngine.Ai;
 
 /// <summary>
 /// Anti-corruption layer between DecisionEngine and whichever LLM backs invoice
-/// classification. Swappable via the "AiProvider" config key (M15) — the PolicyEngine
+/// classification. Swappable via the "AiProvider" config key — the PolicyEngine
 /// never talks to a provider directly, only to this interface.
 /// </summary>
 public interface IAiModelProvider

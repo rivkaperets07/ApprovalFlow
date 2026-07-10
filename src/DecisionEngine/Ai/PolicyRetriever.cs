@@ -8,7 +8,7 @@ namespace DecisionEngine.Ai;
 public record PolicyClause(string RuleId, string Section, string Text);
 
 /// <summary>
-/// N5 (RAG over docs/policy.md): parses the policy document into per-rule_id clauses once
+/// RAG over docs/policy.md: parses the policy document into per-rule_id clauses once
 /// at startup, then retrieves only the ones relevant to a given invoice via TF-IDF cosine
 /// similarity — instead of stuffing the whole document into every AI prompt, which is
 /// literally what the doc's own preamble asks for ("the Nice-to-Have RAG work is to
@@ -22,7 +22,7 @@ public record PolicyClause(string RuleId, string Section, string Text);
 ///
 /// Scoped to policy.md's per-category rule sections (§1-5) only — never §6's autonomy
 /// thresholds or §7's budgets. Those are enforced by PolicyEngine in code and never shown
-/// to the AI at all (M12): retrieval augments the AI's qualitative coherence judgment with
+/// to the AI at all: retrieval augments the AI's qualitative coherence judgment with
 /// rule *text* it can reason about and cite, never the numeric ceilings that actually
 /// decide approve/escalate.
 /// </summary>
@@ -163,7 +163,7 @@ public class PolicyRetriever
     // stop "subscription" (a submitter's Notes) and "Subscriptions" (the rule's own text)
     // from scoring as unrelated words purely because of pluralization. A full stemmer
     // would be overkill for a few dozen short rules, and precision matters less than
-    // recall here — PolicyEngine's code (M12), not this ranking, is what enforces safety.
+    // recall here — PolicyEngine's code, not this ranking, is what enforces safety.
     private static string Stem(string token)
     {
         if (token.Length <= 3)

@@ -17,8 +17,8 @@ spec:
   # deliberately shares invoice records across services, so prefixing must be off.
   - name: keyPrefix
     value: "none"
-  # N3: outbox pattern. A plain SaveStateAsync followed by a separate PublishEventAsync
-  # (the pre-N3 shape) can save an invoice's decision and then crash before the event
+  # Outbox pattern. A plain SaveStateAsync followed by a separate PublishEventAsync
+  # (that earlier shape) can save an invoice's decision and then crash before the event
   # fires — the state says Approved/Escalated forever, but nobody downstream ever finds
   # out (the Gateway's escalation index goes stale, SSE listeners never wake up). With
   # this configured, an ExecuteStateTransactionAsync call against "statestore" both writes

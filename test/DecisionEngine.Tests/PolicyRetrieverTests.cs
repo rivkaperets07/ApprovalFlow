@@ -61,7 +61,7 @@ public class PolicyRetrieverTests
     [Fact]
     public void ParsePolicyMarkdown_ExcludesAutonomyThresholdsSection()
     {
-        // M12: the numeric ceilings PolicyEngine enforces in code must never reach the AI
+        // The numeric ceilings PolicyEngine enforces in code must never reach the AI
         // via retrieval — §6 is deliberately out of the indexable set (see PolicyRetriever's
         // class summary), so this must never come back no matter what's queried for.
         var clauses = PolicyRetriever.ParsePolicyMarkdown(SampleMarkdown);

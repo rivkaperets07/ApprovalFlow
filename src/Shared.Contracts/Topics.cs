@@ -11,7 +11,7 @@ public static class Topics
     public const string InvoiceSubmitted = "invoice.submitted";
 
     /// <summary>DecisionEngine/Gateway → Gateway: a decision landed (AI or human); drives
-    /// the escalation index and the M8 notification channel.</summary>
+    /// the escalation index and the SSE notification channel.</summary>
     public const string InvoiceDecided = "invoice.decided";
 
     /// <summary>DecisionEngine/Gateway → PaymentService: an approved invoice ready to be

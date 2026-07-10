@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 
 /// <summary>
-/// Submitter surface (N1: submitter/admin role): drive your own submission through its
+/// Submitter surface (submitter/admin role): drive your own submission through its
 /// lifecycle — submit, check status, watch for the decision, and resume after a
 /// request-info round trip. Split out of the former single GatewayEndpoints.cs (SRP) so
 /// the submitter path, the approver path, and the Dapr-only pub/sub handlers each live
@@ -40,10 +40,10 @@ public static class SubmissionEndpoints
         invoice.SubmissionAttemptId = Guid.NewGuid().ToString();
 
         // Every log line for the rest of this request carries CorrelationId as a
-        // structured field (M14) without repeating it as a message argument each time.
+        // structured field without repeating it as a message argument each time.
         using var _ = logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = invoice.TrackingId });
 
-        // N4: same id, now on the trace too — this is the root of the whole distributed
+        // Same id, now on the trace too — this is the root of the whole distributed
         // trace for this invoice (Gateway -> DecisionEngine -> PaymentService), so tagging
         // it here means every span downstream that shares this trace can be found by
         // searching correlation_id in Jaeger, the same value already searchable in logs.
@@ -56,7 +56,7 @@ public static class SubmissionEndpoints
             return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
         }
 
-        // M10 backstop: catches an accidental repeat even when the caller doesn't reuse the
+        // Backstop: catches an accidental repeat even when the caller doesn't reuse the
         // same TrackingId and doesn't supply an InvoiceNumber for GLOBAL-DUP to key off —
         // e.g. an API client minting a fresh TrackingId per call, or a double-click that
         // slips past the UI's guard. Short time window (60s) so it never blocks two people
@@ -71,7 +71,7 @@ public static class SubmissionEndpoints
         // GLOBAL-DUP (docs/policy.md): an exact repeat of Vendor + InvoiceNumber +
         // TotalAmount is rejected outright — no second payment. Only applies when
         // InvoiceNumber is supplied (it's optional; see InvoicePayload for why this alone
-        // isn't F3/M10's real double-payment protection). Checked before GLOBAL-FRAUD since
+        // isn't the real double-payment protection). Checked before GLOBAL-FRAUD since
         // an exact three-field match is a far more certain signal than the round-number
         // heuristic.
         if (!string.IsNullOrWhiteSpace(invoice.InvoiceNumber))
@@ -84,7 +84,7 @@ public static class SubmissionEndpoints
                 invoice.DecidedBy = DecidedBy.System;
 
                 // Not added to the escalation queue — this is an outright reject, not a
-                // human-review item (F6: no rubber-stamping a call the router can make itself).
+                // human-review item; no rubber-stamping a call the router can make itself.
                 await PersistSubmissionAsync(daprClient, submissionStore, invoice);
 
                 logger.LogWarning("Invoice {TrackingId} rejected as a duplicate of invoice '{InvoiceNumber}' (GLOBAL-DUP).", invoice.TrackingId, invoice.InvoiceNumber);
@@ -117,7 +117,7 @@ public static class SubmissionEndpoints
     }
 
     // Every submission outcome persists identically: the invoice record, the TrackingId
-    // idempotency flag, and membership in the all-submissions index (F8's dashboard input);
+    // idempotency flag, and membership in the all-submissions index (the dashboard's input);
     // gate-escalated outcomes (GLOBAL-FRAUD) additionally join the escalation queue. One
     // helper so the three SubmitAsync outcomes can't drift apart.
     private static async Task PersistSubmissionAsync(DaprClient daprClient, ISubmissionStore submissionStore, InvoicePayload invoice, bool addToEscalationQueue = false)
@@ -131,15 +131,15 @@ public static class SubmissionEndpoints
         }
     }
 
-    // Proxies DecisionEngine's /vendors via Dapr's synchronous service invocation (M5's
-    // remaining building block — everything else in this system talks pub/sub or state).
+    // Proxies DecisionEngine's /vendors via Dapr's synchronous service invocation — the one
+    // synchronous call in this system; everything else talks pub/sub or state.
     // The sidecar handles service discovery/mTLS/retries; the Gateway never needs
     // DecisionEngine's network address, only its Dapr app-id.
     private static async Task<IResult> GetVendorsAsync(DaprClient daprClient, Bulkhead decisionEngineBulkhead, ILogger<Program> logger)
     {
         try
         {
-            // N3 bulkhead: caps concurrent Gateway->DecisionEngine calls so a slow/overloaded
+            // Bulkhead: caps concurrent Gateway->DecisionEngine calls so a slow/overloaded
             // DecisionEngine can't exhaust Gateway's own resources (see Bulkhead.cs).
             var vendors = await decisionEngineBulkhead.ExecuteAsync(
                 () => daprClient.InvokeMethodAsync<List<VendorEntry>>(HttpMethod.Get, "decision-engine", "vendors"));
@@ -193,7 +193,7 @@ public static class SubmissionEndpoints
         });
     }
 
-    // M8: the notification channel — a client opens this right after /submit and gets the
+    // The notification channel — a client opens this right after /submit and gets the
     // decision pushed to it (Server-Sent Events) instead of having to poll /status. Checks
     // current state first in case the decision already landed before the connection opened
     // (the Stub AI decides in well under a second); otherwise waits on IInvoiceNotifier,
@@ -240,12 +240,13 @@ public static class SubmissionEndpoints
         logger.LogInformation("Notification delivered for invoice {TrackingId} via SSE.", trackingId);
     }
 
-    // F5's resume half: the submitter fills in whatever was missing and this puts the
-    // invoice back through the exact same evaluation path a first-time submission takes
-    // (invoice.submitted -> DecisionEngine), using the same TrackingId so the audit trail
-    // and payment flow never see two records for one expense. Published directly rather
-    // than through /submit so it isn't swallowed by that endpoint's F3 idempotency guard —
-    // this is a deliberate re-evaluation of an existing invoice, not a possible duplicate.
+    // Resume half of send-back-for-info: the submitter fills in whatever was missing and
+    // this puts the invoice back through the exact same evaluation path a first-time
+    // submission takes (invoice.submitted -> DecisionEngine), using the same TrackingId so
+    // the audit trail and payment flow never see two records for one expense. Published
+    // directly rather than through /submit so it isn't swallowed by that endpoint's
+    // idempotency guard — this is a deliberate re-evaluation of an existing invoice, not a
+    // possible duplicate.
     private static async Task<IResult> ProvideInfoAsync([FromRoute] string trackingId, [FromBody] MoreInfoUpdate? update, DaprClient daprClient, ILogger<Program> logger)
     {
         if (string.IsNullOrWhiteSpace(trackingId))

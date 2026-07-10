@@ -18,7 +18,7 @@ public class InvoiceNotifierTests
     [Fact]
     public async Task PublishThenWait_StillDeliversThePayload()
     {
-        // M8's race guard: a decision that lands before the client ever opens the
+        // Race guard: a decision that lands before the client ever opens the
         // notification channel must not be lost.
         var notifier = new InvoiceNotifier();
 

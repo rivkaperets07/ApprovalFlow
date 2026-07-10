@@ -18,7 +18,7 @@ public class InvoicePayload
     public string? Reason { get; set; }
     public string? DecidedBy { get; set; }
 
-    // Payment outcome, merged back in by the Gateway from PaymentService (F2, F9).
+    // Payment outcome, merged back in by the Gateway from PaymentService.
     public string? PaymentStatus { get; set; }
     public string? PaymentMessage { get; set; }
     public DateTimeOffset? SubmittedAt { get; set; }
@@ -29,9 +29,9 @@ public class InvoicePayload
     public string? AiSuggestedCategory { get; set; }
     public double? AiConfidence { get; set; }
 
-    /// <summary>N5: docs/policy.md rule_ids the AI's coherence check actually retrieved and
+    /// <summary>docs/policy.md rule_ids the AI's coherence check actually retrieved and
     /// cited (PolicyRetriever — RAG over the policy document, not the whole file in every
-    /// prompt). Answers F4's "the policy rules it cited" directly; null/empty when the AI
+    /// prompt). Directly answers "the policy rules it cited"; null/empty when the AI
     /// was never consulted, same as AiSuggestedCategory above.</summary>
     public List<string>? AiPolicyRulesCited { get; set; }
 
@@ -68,7 +68,7 @@ public class InvoicePayload
 
     // GLOBAL-DUP (docs/policy.md): optional, submitter-typed. When present, a repeat of the
     // same Vendor + InvoiceNumber + TotalAmount is rejected outright as a duplicate. Not
-    // required — F3/M10's actual double-payment protection is TrackingId-based idempotency
+    // required — the actual double-payment protection is TrackingId-based idempotency
     // (ISubmissionStore) plus the UI's submit-button guard, since a typed invoice number can
     // always be omitted or altered and so is not load-bearing on its own.
     public string? InvoiceNumber { get; set; }

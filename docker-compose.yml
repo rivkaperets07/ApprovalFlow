@@ -14,7 +14,7 @@
     networks:
       - approval-flow-network
 
-  # N4: OpenTelemetry backend. Jaeger's all-in-one image accepts OTLP directly (gRPC on
+  # OpenTelemetry backend. Jaeger's all-in-one image accepts OTLP directly (gRPC on
   # 4317, HTTP on 4318 — no separate OTel Collector needed) and serves its own UI, so this
   # one container is both the trace ingest and the place to look at the result
   # (http://localhost:16686). Free, local, no license — same "runs free and local"
@@ -28,7 +28,7 @@
     networks:
       - approval-flow-network
 
-  # N4: metrics backend. Scrapes each app's OpenTelemetry Prometheus exporter (GET
+  # Metrics backend. Scrapes each app's OpenTelemetry Prometheus exporter (GET
   # /metrics — see the AddPrometheusExporter() call in each service's Program.cs) on its
   # own schedule rather than the apps pushing, so a Prometheus outage never blocks a
   # request the way a synchronous push could.
@@ -51,10 +51,10 @@
       dockerfile: GatewayService/Dockerfile
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
-      # N1: HMAC key for the self-signed demo JWTs. Empty falls back to the checked-in
+      # HMAC key for the self-signed demo JWTs. Empty falls back to the checked-in
       # demo default (fine locally; override in .env for anything shared).
       - JWT_SIGNING_KEY=${JWT_SIGNING_KEY:-}
-      # N4: OTLP trace export target — Jaeger's gRPC receiver, same compose network.
+      # OTLP trace export target — Jaeger's gRPC receiver, same compose network.
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     ports:
       - "5000:8080"
@@ -85,7 +85,7 @@
     volumes:
       - ./components:/components
       # Bind-mounted (not baked into the image) so policy thresholds can be edited
-      # and picked up live via reloadOnChange, without rebuilding/redeploying (F7, M13).
+      # and picked up live via reloadOnChange, without rebuilding/redeploying.
       - ./src/DecisionEngine/Policies:/app/Policies
       # Same story, writable (not :ro like the Gateway's copy above): admin's
       # POST /vendors writes here, and reloadOnChange picks it up on the next
@@ -94,7 +94,7 @@
       # rename can't replace a file that is itself a bind-mount point (EBUSY) — only a
       # directory mount lets a rename land inside it.
       - ./src/DecisionEngine/Ai:/app/Ai
-      # N5: RAG source document — outside src/ (this service's build context), so it can
+      # RAG source document — outside src/ (this service's build context), so it can
       # only reach the container via a mount, never a Dockerfile COPY. Directory mount for
       # the same Docker Desktop/WSL2 reliability reasons as Ai/ above; read-only, since
       # PolicyRetriever only ever reads it (there's no admin-write endpoint for policy.md
@@ -134,7 +134,7 @@
     command: ["/daprd","--app-id","decision-engine","--app-port","8080","--dapr-http-port","3500","--resources-path","/components"]
     environment:
       # Read by the secretstores.local.env component so GroqAiModelProvider can
-      # fetch it via DaprClient.GetSecretAsync (M5). Empty is fine while AiProvider=Stub.
+      # fetch it via DaprClient.GetSecretAsync. Empty is fine while AiProvider=Stub.
       - GROQ_API_KEY=${GROQ_API_KEY:-}
     depends_on:
       - decision-engine

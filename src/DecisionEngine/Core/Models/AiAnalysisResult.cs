@@ -13,10 +13,10 @@ public class AiAnalysisResult
     public double ConfidenceScore { get; set; }
     public string Reasoning { get; set; } = string.Empty;
 
-    /// <summary>N5: rule_ids from docs/policy.md the AI actually considered — retrieved by
+    /// <summary>rule_ids from docs/policy.md the AI actually considered — retrieved by
     /// PolicyRetriever, not the whole document, and never the numeric thresholds in it
-    /// (those stay code-only, M12). Matches the doc's own suggested field name
-    /// ("policy_violations[].rule_id"), directly answering F4's "the policy rules it
+    /// (those stay code-only). Matches the doc's own suggested field name
+    /// ("policy_violations[].rule_id"), directly answering "the policy rules it
     /// cited."</summary>
     public List<string> PolicyRulesCited { get; set; } = [];
 }

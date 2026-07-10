@@ -20,11 +20,12 @@ CultureInfo.CurrentCulture = currencyCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// M14: structured (JSON) logging instead of the default plain-text console formatter, so
+// Structured (JSON) logging instead of the default plain-text console formatter, so
 // every business log line's CorrelationId/TrackingId fields are machine-filterable.
 builder.Logging.ClearProviders();
 // IncludeScopes: HandleInvoiceSubmittedAsync opens a BeginScope(CorrelationId) — without
-// this the scope's fields are computed and then silently dropped, defeating M14's point.
+// this the scope's fields are computed and then silently dropped, defeating the whole
+// point of structured logging.
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 
 builder.Configuration.AddJsonFile("Policies/policies.json", optional: false, reloadOnChange: true);
@@ -36,7 +37,7 @@ builder.Services.AddSingleton<PolicyEngine>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "ApprovalFlow DecisionEngine", Version = "v1" }));
 
-// N5: parsed once at startup — docs/policy.md is bind-mounted read-only (docker-compose.yml),
+// Parsed once at startup — docs/policy.md is bind-mounted read-only (docker-compose.yml),
 // same "no rebuild to tune it" spirit as Policies/policies.json, though PolicyRetriever
 // doesn't watch it for live changes the way IConfiguration's reloadOnChange does.
 var policyDocumentPath = builder.Configuration.GetValue<string>("PolicyDocumentPath", "docs/policy.md")!;
@@ -52,7 +53,7 @@ else
     builder.Services.AddSingleton<IAiModelProvider, StubAiModelProvider>();
 }
 
-// N4: traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).
+// Traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).
 // AddSource(DecisionEngineTelemetry.ActivitySourceName) picks up this service's own
 // "ai.analyze_invoice"/"policy.evaluate" spans (InvoiceEndpoints.cs) alongside the
 // auto-instrumented ASP.NET Core/HttpClient/gRPC ones (the last of which covers every Dapr
@@ -81,6 +82,6 @@ app.MapSubscribeHandler();
 app.MapInvoiceEndpoints();
 app.MapAdminEndpoints();
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
-app.MapPrometheusScrapingEndpoint(); // N4: GET /metrics
+app.MapPrometheusScrapingEndpoint(); // GET /metrics
 
 app.Run();

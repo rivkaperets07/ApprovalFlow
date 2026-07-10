@@ -65,7 +65,7 @@ public class StubAiModelProvider : IAiModelProvider
             reasoning = $"Notes/line items read like '{matchedCategory}', but the vendor directory lists '{category}' for this vendor — flagged for review.";
         }
 
-        // N5: retrieve only the policy.md rule(s) relevant to this category/notes instead
+        // Retrieve only the policy.md rule(s) relevant to this category/notes instead
         // of reasoning in a vacuum — the Stub provider gets the same RAG treatment as Groq
         // (PolicyRetriever has no network dependency either way), so CI/tests exercise the
         // retrieval path without needing an API key.

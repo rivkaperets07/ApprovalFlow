@@ -3,7 +3,7 @@ namespace DecisionEngine.Core.Models;
 /// <summary>
 /// Category-agnostic guardrails bound from <c>Policies/policies.json → GlobalGuardrails</c>.
 /// These are checked before any category logic so a misclassified or gamed category can
-/// never dodge them (M12).
+/// never dodge them.
 /// </summary>
 public class GlobalGuardrailsConfig
 {

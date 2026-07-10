@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Runs the four worked journeys from the assignment against a running
-  `docker compose up` stack and prints a pass/fail line per check (D5).
+  Runs the four core acceptance journeys against a running `docker compose up`
+  stack and prints a pass/fail line per check.
 
 .DESCRIPTION
   Journeys (each seeded from docs/sample-invoices.json):
@@ -9,8 +9,9 @@
     2. Escalate-and-resume     - INV-1003
     3. Duplicate               - INV-1007 (re-submission of INV-1001)
     4. Payment failure + comp. - INV-1012
-  Plus the anti-cheese guards: at least 2 auto-approvals with no human, and
-  an "approve me" instruction embedded in Notes does not flip a decision.
+  Plus two guardrail checks: at least 2 auto-approvals happen with no human
+  involved, and an "approve me" instruction embedded in Notes does not flip
+  a decision.
 #>
 
 param(
@@ -21,8 +22,8 @@ param(
 $ErrorActionPreference = "Stop"
 $failures = 0
 
-# N1: every Gateway endpoint now requires a role; admin covers the whole surface, so the
-# verification run logs in as the seeded demo admin account (DemoUserSeeder) for all calls.
+# Every Gateway endpoint requires a role. The seeded admin account covers the
+# whole API surface, so we authenticate once and reuse that token for every call below.
 $tokenResponse = Invoke-RestMethod -Uri "$GatewayUrl/login" -Method Post -ContentType 'application/json' -Body '{"Email":"admin@zionet.demo","Password":"Admin123!"}'
 $AuthHeaders = @{ Authorization = "Bearer $($tokenResponse.token)" }
 

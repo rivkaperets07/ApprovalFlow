@@ -7,7 +7,7 @@ namespace DecisionEngine.Core.Logic;
 /// Deterministic gate that turns an AI classification into an approve/escalate decision.
 /// The AI only ever supplies inputs (category, confidence, extracted metadata); every
 /// threshold check below is plain code, so a manipulated or overconfident AI response
-/// can never push a decision past the configured ceilings (M12).
+/// can never push a decision past the configured ceilings.
 /// </summary>
 public class PolicyEngine
 {
@@ -129,7 +129,7 @@ public class PolicyEngine
         // MEAL-03 (docs/policy.md): a receipt that is alcohol-only (every line item reads
         // as alcohol) is not reimbursable. Escalated rather than auto-rejected — the
         // keyword signal can misfire, so a human keeps the final say on money leaving the
-        // door, consistent with this engine never guessing in the risky direction (M12/M15).
+        // door, consistent with this engine never guessing in the risky direction.
         if (invoice.LineItems is { Count: > 0 } && invoice.LineItems.All(IsAlcoholLineItem))
             return RouterDecision.Escalated("Alcohol-only receipts are not reimbursable (MEAL-03).");
 
@@ -155,7 +155,7 @@ public class PolicyEngine
     private static bool IsAlcoholLineItem(LineItem item)
         => AlcoholKeywords.Any(keyword => item.Description.Contains(keyword, StringComparison.OrdinalIgnoreCase));
 
-    // F9: lets an auditor pull the exact policy.md rule_id behind a flat-ceiling decision.
+    // Lets an auditor pull the exact policy.md rule_id behind a flat-ceiling decision.
     // Only categories docs/policy.md actually assigns an id to are listed here — Office
     // Supplies/Marketing are this system's own extended categories with no policy.md rule
     // to cite, so they're left unlabeled rather than citing something that doesn't exist.

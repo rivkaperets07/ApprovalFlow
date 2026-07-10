@@ -7,8 +7,8 @@ using System.Text.Json;
 
 /// <summary>
 /// Dapr sidecar deliveries — anonymous on purpose: the sidecar carries no JWT, and these
-/// routes are only reachable inside the compose network (M6, single published port
-/// notwithstanding, they're not part of the public API surface). Split out of the former
+/// routes are only reachable inside the compose network — a single published port
+/// notwithstanding, they're not part of the public API surface. Split out of the former
 /// single GatewayEndpoints.cs (SRP); see SubmissionEndpoints and ApproverEndpoints for the
 /// two authenticated surfaces.
 /// </summary>
@@ -21,7 +21,7 @@ public static class PubSubHandlers
     }
 
     // Payment outcome (including Saga compensation) arrives asynchronously from
-    // PaymentService; merge it into the invoice record so /status reflects it (F2, F9).
+    // PaymentService; merge it into the invoice record so /status reflects it.
     // The merge is ETag-guarded with a short retry: a plain read-modify-write here would
     // silently drop whichever concurrent update (this merge or another writer of the
     // record) lost the race — the same lost-update class StateIndex already defends against.
@@ -55,9 +55,9 @@ public static class PubSubHandlers
     }
 
     // Keeps the escalation index in sync for every decision, whether it came from
-    // DecisionEngine's automatic evaluation (published via the N3 outbox — see
+    // DecisionEngine's automatic evaluation (published via the outbox — see
     // components/statestore.yaml) or a manual approve/reject/request-info in
-    // ApproverEndpoints (still a plain PublishEventAsync). Also fires M8's notification
+    // ApproverEndpoints (still a plain PublishEventAsync). Also fires the notification
     // channel (IInvoiceNotifier) so anyone holding open GET /notifications/{trackingId}
     // gets woken up instead of having to poll.
     //

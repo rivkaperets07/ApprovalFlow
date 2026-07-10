@@ -2,7 +2,7 @@ function gatewayBase() {
     return document.getElementById('gatewayUrl').value.replace(/\/$/, '');
 }
 
-// --- N1: real credential-based session -------------------------------
+// --- Real credential-based session -------------------------------
 // Each role-bearing section is tagged data-role="submitter"|"approver"|"admin";
 // admin (which RequireRole treats as satisfying both policies — see
 // AuthPolicies) sees everything. Nothing role-gated is visible until a real
@@ -142,7 +142,7 @@ document.getElementById('addUserBtn').addEventListener('click', async () => {
     }
 });
 
-// --- N1: admin-only role assignment -----------------------------------
+// --- Admin-only role assignment -----------------------------------
 document.getElementById('setRoleBtn').addEventListener('click', async () => {
     const email = document.getElementById('setRoleEmail').value.trim();
     const role = document.getElementById('setRoleValue').value;
@@ -211,7 +211,7 @@ function renderStatusCard(container, invoice) {
     const aiCategoryRow = invoice.aiSuggestedCategory
         ? `<div class="status-row"><span>AI classified as</span><span>${invoice.aiSuggestedCategory} (confidence ${invoice.aiConfidence ?? '—'})</span></div>`
         : `<div class="status-row"><span>AI classified as</span><span class="empty">AI was not consulted (e.g. blocked before or above the risk threshold)</span></div>`;
-    // N5/F4: docs/policy.md rule_ids PolicyRetriever surfaced and the AI actually cited —
+    // docs/policy.md rule_ids PolicyRetriever surfaced and the AI actually cited —
     // only present once the AI's been consulted at all (see aiCategoryRow above).
     const policyRulesRow = invoice.aiPolicyRulesCited && invoice.aiPolicyRulesCited.length > 0
         ? `<div class="status-row"><span>Policy rules cited</span><span>${invoice.aiPolicyRulesCited.join(', ')}</span></div>`
@@ -300,7 +300,7 @@ function updateLineItemsHint() {
 }
 document.getElementById('totalAmount').addEventListener('input', updateLineItemsHint);
 
-// --- TrackingId (F3): generated client-side and held steady across
+// --- TrackingId: generated client-side and held steady across
 // retries of the *same* submission attempt, so an accidental double POST
 // (network retry, browser back-button resubmit, a click that slips past the
 // disabled button) carries the same id and the Gateway's idempotency check
@@ -345,8 +345,8 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     statusBox.style.display = 'block';
     statusBox.textContent = 'Submitting...';
 
-    // Only guard the POST itself — an accidental double-click could fire it twice
-    // (F3). Re-enable right after so the submitter can immediately start a
+    // Only guard the POST itself — an accidental double-click could fire it twice.
+    // Re-enable right after so the submitter can immediately start a
     // separate, unrelated expense without waiting for this one's status polling.
     submitBtn.disabled = true;
     let submitResult;
@@ -358,7 +358,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     if (!submitResult.ok || !submitResult.data?.trackingId) {
         // Deliberately do not rotate trackingIdField.value here: if the submitter
         // retries after a failure, the retry should carry the same id so the
-        // Gateway can tell it's the same attempt (F3).
+        // Gateway can tell it's the same attempt.
         statusBox.textContent = `Error: HTTP ${submitResult.status}`;
         return;
     }
@@ -367,7 +367,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     statusBox.textContent = `Submitted as ${trackingId}. Waiting for a decision...`;
     trackingIdField.value = generateTrackingId(); // accepted — next submission gets a fresh id
 
-    // M8: push-based notification instead of polling — this holds one connection
+    // Push-based notification instead of polling — this holds one connection
     // open and the Gateway wakes it up the moment invoice.decided fires (or replies
     // immediately if the decision already landed). Falls back to "still pending" +
     // manual Check Status after ~15s, same as the old polling loop did, in case the
@@ -411,7 +411,7 @@ document.getElementById('checkStatusBtn').addEventListener('click', async () => 
     renderStatusCard(box, data);
 });
 
-// --- Audit trail (F9) ---------------------------------------------
+// --- Audit trail ---------------------------------------------
 document.getElementById('pullAuditBtn').addEventListener('click', async () => {
     const id = document.getElementById('auditTrackingId').value.trim();
     const result = document.getElementById('auditResult');
@@ -488,7 +488,7 @@ document.getElementById('rejectBtn').addEventListener('click', async () => {
     loadEscalations();
 });
 
-// F5: the third leg of the approver's one-action set — send the item back to the
+// The third leg of the approver's one-action set — send the item back to the
 // submitter instead of deciding outright. Drops it out of the escalation queue
 // until the submitter responds via "Provide More Info" below.
 document.getElementById('requestInfoBtn').addEventListener('click', async () => {
@@ -568,8 +568,8 @@ function collectInfoLineItems() {
     return items.length > 0 ? items : null; // null = "leave what's already stored"
 }
 
-// F5's resume half: only send fields the submitter actually filled in (empty ->
-// null) so this doesn't blank out data the reviewer didn't ask about.
+// Resume half of send-back-for-info: only send fields the submitter actually filled
+// in (empty -> null) so this doesn't blank out data the reviewer didn't ask about.
 document.getElementById('provideInfoBtn').addEventListener('click', async () => {
     const id = document.getElementById('infoTrackingId').value.trim();
     const orNull = (value) => value ? value : null;
@@ -613,7 +613,7 @@ async function loadStats() {
 }
 document.getElementById('refreshStatsBtn').addEventListener('click', loadStats);
 
-// Initial load: sign in with the default role first (N1), then the panels load
+// Initial load: sign in with the default role first, then the panels load
 // from inside login() once a token is available.
 login();
 updateLineItemsHint();

@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 /// <summary>
-/// Approver/controller/auditor surface (N1: approver/admin role): the escalation queue,
+/// Approver/controller/auditor surface (approver/admin role): the escalation queue,
 /// the three manual decisions, the dashboards, and the per-invoice audit trail. Split out
 /// of the former single GatewayEndpoints.cs (SRP) — see SubmissionEndpoints for the
 /// submitter half and PubSubHandlers for the Dapr-only deliveries.
@@ -22,9 +22,9 @@ public static class ApproverEndpoints
         app.MapPost("/request-info/{trackingId}", RequestInfoAsync).RequireAuthorization(AuthPolicies.Approver);
     }
 
-    // F9: the auditor's complete decision trail for one item, linked by its TrackingId as
+    // The auditor's complete decision trail for one item, linked by its TrackingId as
     // the correlation id (the same id every log line across every service tags itself
-    // with). Unlike /status — F2's curated, plain-language submitter view — this returns
+    // with). Unlike /status — a curated, plain-language submitter view — this returns
     // the full stored record as-is: the extracted data the submitter/AI supplied
     // (LineItems, TripId, Currency, BusinessJustification, ClientName, IsPremiumTravel,
     // InvoiceNumber), the AI's reasoning and confidence, who made the final call
@@ -49,7 +49,7 @@ public static class ApproverEndpoints
         return Results.Ok(invoice);
     }
 
-    // F4: queue of only the items the system escalated, so an approver never has to
+    // Queue of only the items the system escalated, so an approver never has to
     // rubber-stamp what the router already handled on its own.
     private static async Task<IResult> GetEscalationsAsync(DaprClient daprClient)
     {
@@ -72,7 +72,7 @@ public static class ApproverEndpoints
         return Results.Ok(items);
     }
 
-    // F8: throughput and auto- vs human-approved money, for the controller dashboard.
+    // Throughput and auto- vs human-approved money, for the controller dashboard.
     private static async Task<IResult> GetStatsAsync(DaprClient daprClient)
     {
         var trackingIds = await StateIndex.GetAllAsync(daprClient, DaprComponents.StateStore, GatewayIndexKeys.Submitted);
@@ -219,7 +219,7 @@ public static class ApproverEndpoints
         return Results.Ok(invoice);
     }
 
-    // F5, third leg of the approver's one-action set (alongside approve/reject): park the
+    // Third leg of the approver's one-action set (alongside approve/reject): park the
     // invoice on the submitter instead of deciding outright. Publishing invoice.decided with
     // the (now non-Escalated) status already saved lets PubSubHandlers.HandleInvoiceDecidedIndexAsync
     // drop it out of the escalation queue exactly the same way approve/reject do — no
@@ -253,7 +253,7 @@ public static class ApproverEndpoints
     }
 }
 
-// F5: what a reviewer sends along with a "request more info" action — a plain-language
+// What a reviewer sends along with a "request more info" action — a plain-language
 // note for the submitter, distinct from the InvoicePayload contract itself.
 public class RequestInfoBody
 {

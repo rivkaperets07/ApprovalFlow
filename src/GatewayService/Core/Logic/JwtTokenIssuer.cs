@@ -5,8 +5,8 @@ using Microsoft.IdentityModel.Tokens;
 
 /// <summary>
 
-/// N1: self-signed JWT issuance (the assignment explicitly allows a self-signed JWT
-/// instead of a real IdP). One symmetric key, three roles — submitter / approver / admin
+/// Self-signed JWT issuance — no external identity provider required. One symmetric
+/// key, three roles — submitter / approver / admin
 /// — with admin implying both of the others via AuthPolicies below. Called only after
 /// AuthEndpoints has already verified the caller's identity (register/login); this class
 /// just signs the token for whatever role the verified account holds.

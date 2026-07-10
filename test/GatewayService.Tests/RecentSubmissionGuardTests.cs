@@ -45,7 +45,7 @@ public class RecentSubmissionGuardTests
     public async Task SameContentWithinWindow_ReturnsOriginalTrackingId()
     {
         // No InvoiceNumber, no reused TrackingId — the case GLOBAL-DUP and the TrackingId
-        // check both miss, which is exactly what this guard exists to catch (M10).
+        // check both miss, which is exactly what this guard exists to catch.
         var daprMock = new Mock<DaprClient>();
         daprMock.Setup(c => c.GetStateAndETagAsync<string?>("statestore", It.IsAny<string>(), null, null, default))
             .ReturnsAsync(("TRK-1", "etag-1"));

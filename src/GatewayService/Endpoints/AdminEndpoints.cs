@@ -7,8 +7,8 @@ using System.Text.Json;
 
 /// <summary>
 /// Admin-only config surface: add/update a vendor directory entry, or read/replace the
-/// live policy document — both proxied to DecisionEngine over Dapr service invocation
-/// (M5), same pattern as SubmissionEndpoints.GetVendorsAsync. DecisionEngine has no auth
+/// live policy document — both proxied to DecisionEngine over Dapr service invocation,
+/// same pattern as SubmissionEndpoints.GetVendorsAsync. DecisionEngine has no auth
 /// of its own (reachable only over the sidecar, never directly), so this admin gate is
 /// the only access control on either operation. Both take effect immediately — no
 /// restart — because DecisionEngine's writes land in the same files IConfiguration
@@ -34,7 +34,7 @@ public static class AdminEndpoints
 
         try
         {
-            // N3 bulkhead (Bulkhead.cs): shared cap across every Gateway->DecisionEngine
+            // Bulkhead (Bulkhead.cs): shared cap across every Gateway->DecisionEngine
             // call, so a slow/overloaded DecisionEngine can't exhaust Gateway's own
             // resources regardless of which admin/submitter endpoint is calling it.
             var saved = await decisionEngineBulkhead.ExecuteAsync(

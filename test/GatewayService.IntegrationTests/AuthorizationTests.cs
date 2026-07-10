@@ -8,7 +8,7 @@ namespace GatewayService.IntegrationTests;
 /// <summary>
 /// Proves the real ASP.NET Core authentication/authorization pipeline — JwtBearer
 /// validation plus the AuthPolicies role policies registered in GatewayService.cs —
-/// actually enforces N1's role model end-to-end, not just that PolicyEngine-adjacent unit
+/// actually enforces the role model end-to-end, not just that PolicyEngine-adjacent unit
 /// tests believe it does. AuthorizationMiddleware rejects an unauthorized/wrong-role
 /// request before the endpoint handler ever runs, so these tests are safe to point at
 /// endpoints that would otherwise need a live Dapr sidecar (submit, escalations) — a

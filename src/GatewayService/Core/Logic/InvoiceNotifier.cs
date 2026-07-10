@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 
 /// <summary>
-/// M8's "notification channel": a one-shot, in-process wake-up per TrackingId so a client
+/// Notification channel: a one-shot, in-process wake-up per TrackingId so a client
 /// holding open <c>GET /notifications/{trackingId}</c> (Server-Sent Events) gets the final
 /// decision pushed to it instead of having to keep polling <c>GET /status</c>.
 /// <c>GetOrAdd</c> on both sides makes the order race-safe — whichever of Publish/

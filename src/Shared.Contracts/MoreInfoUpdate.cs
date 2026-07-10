@@ -1,9 +1,9 @@
 namespace ApprovalFlow.Contracts;
 
-/// <summary>Body for <c>POST /provide-info/{trackingId}</c> (F5): the submitter fills in
+/// <summary>Body for <c>POST /provide-info/{trackingId}</c>: the submitter fills in
 /// whatever a reviewer said was missing. Deliberately excludes Vendor/TotalAmount/Category —
 /// the fields that drive the autonomy ceiling — so "more info" can never be used to quietly
-/// change the amount that already triggered a human review (M12). Every field is optional
+/// change the amount that already triggered a human review. Every field is optional
 /// and only overwrites the stored invoice when non-null, so a submitter only filling in the
 /// one thing that was missing doesn't blank out everything else.</summary>
 public class MoreInfoUpdate

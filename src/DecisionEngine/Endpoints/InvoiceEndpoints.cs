@@ -51,10 +51,10 @@ public static class InvoiceEndpoints
 
         // Every log line for the rest of this delivery (including EvaluateAndPublishAsync,
         // which inherits the scope across the await chain) carries CorrelationId as a
-        // structured field (M14) without repeating it as a message argument each time.
+        // structured field without repeating it as a message argument each time.
         using var _ = logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = trackingId });
 
-        // N4: the same TrackingId every log line already carries, now also on the
+        // The same TrackingId every log line already carries, now also on the
         // auto-instrumented ASP.NET Core span for this request — so the trace for one
         // invoice can be found from its logs (search CorrelationId, then correlation_id
         // in Jaeger) and back again.
@@ -98,7 +98,7 @@ public static class InvoiceEndpoints
         PolicyEngine policyEngine,
         ILogger<Program> logger)
     {
-        // N4: one span wrapping the whole route-and-decide step, child of the request's
+        // One span wrapping the whole route-and-decide step, child of the request's
         // auto-instrumented span — lets a trace show "how long did deciding this invoice
         // take" as its own bar, separate from the outbox write and the invoice.approved
         // publish that follow it.
@@ -137,9 +137,8 @@ public static class InvoiceEndpoints
                 invoice.AiSuggestedCategory = category;
                 try
                 {
-                    // N4: "the agent's model/tool calls" the assignment asks to be part of
-                    // the trace — a distinct child span so a trace viewer shows exactly how
-                    // long the AI call itself took, separate from PolicyEngine's own
+                    // The AI call gets its own distinct child span so a trace viewer shows
+                    // exactly how long it took, separate from PolicyEngine's own
                     // deterministic evaluation right after it (ActivityKind.Client: this is
                     // this service acting as a client of an external-ish dependency, whether
                     // that's the real Groq HTTP call or the in-process Stub).
@@ -160,7 +159,7 @@ public static class InvoiceEndpoints
                     aiActivity?.SetTag("ai.policy_rules_cited", string.Join(",", aiResult.PolicyRulesCited));
 
                     invoice.AiConfidence = aiResult.ConfidenceScore;
-                    // N5/F4: whichever docs/policy.md rule(s) PolicyRetriever surfaced and
+                    // Whichever docs/policy.md rule(s) PolicyRetriever surfaced and
                     // the AI actually cited — visible on the invoice itself (status,
                     // escalations, audit trail), not just in the trace/log line.
                     invoice.AiPolicyRulesCited = aiResult.PolicyRulesCited;
@@ -169,7 +168,7 @@ public static class InvoiceEndpoints
                 }
                 catch (Exception ex)
                 {
-                    // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves (M15).
+                    // Fail-fast, never silent: an AI/provider error always escalates, never auto-approves.
                     logger.LogError(ex, "AI provider failed for invoice {TrackingId}; escalating for safety.", trackingId);
                     decision = RouterDecision.Escalated("AI provider error — escalated for safety.");
                     decidedBy = DecidedBy.System;
@@ -184,7 +183,7 @@ public static class InvoiceEndpoints
         invoice.Reason = reason;
         invoice.DecidedBy = decidedBy;
 
-        // N3 outbox (components/statestore.yaml): one call both persists the decision and
+        // Outbox pattern (components/statestore.yaml): one call both persists the decision and
         // publishes invoice.decided, atomically — replacing the previous SaveStateAsync +
         // PublishEventAsync(decisionResult) pair, which could save the decision and then
         // crash before the event fired, stranding the invoice in a "decided but nobody was

@@ -1,5 +1,5 @@
 /// <summary>
-/// N3: caps how many concurrent calls to one downstream dependency are in flight, so that
+/// Caps how many concurrent calls to one downstream dependency are in flight, so that
 /// dependency being slow or overloaded can't exhaust Gateway's own thread/connection pool
 /// and drag down unrelated requests with it — the isolation this borrows its name from
 /// (a ship's bulkheads keep one flooded compartment from sinking the whole hull). Rejects

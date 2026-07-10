@@ -14,7 +14,7 @@ namespace DecisionEngine.Ai;
 /// classify — only to judge whether the submission's Notes/LineItems are coherent with that
 /// category. It only ever produces a *suggestion* (confidence, reasoning, extracted
 /// metadata) — PolicyEngine is what turns that into an approve/escalate decision, so
-/// nothing this class returns can bypass a ceiling by itself (M12).
+/// nothing this class returns can bypass a ceiling by itself.
 /// </summary>
 public class GroqAiModelProvider : IAiModelProvider
 {
@@ -41,11 +41,11 @@ public class GroqAiModelProvider : IAiModelProvider
     {
         var apiKey = await GetApiKeyAsync(cancellationToken);
 
-        // N5: retrieve only the policy.md rule(s) relevant to this invoice — never the
+        // Retrieve only the policy.md rule(s) relevant to this invoice — never the
         // whole document — so the prompt stays small and the model's coherence judgment is
         // grounded in the actual rule text instead of guessing what "Meals" or "Travel"
         // means. The numeric thresholds these rules describe stay out of the prompt
-        // entirely; PolicyEngine enforces those in code and never asks the model (M12).
+        // entirely; PolicyEngine enforces those in code and never asks the model.
         var citedClauses = _policyRetriever.Retrieve(PolicyRetriever.BuildQuery(invoice, category), topK: 3);
 
         var request = new HttpRequestMessage(HttpMethod.Post, Endpoint);
@@ -68,8 +68,8 @@ public class GroqAiModelProvider : IAiModelProvider
         // Defense in depth: the prompt asks the model to echo back which retrieved
         // rule_id(s) it relied on, but nothing guarantees strict-JSON compliance goes that
         // far in practice. If it left PolicyRulesCited empty, fall back to "every rule
-        // retrieved for this query" — that's still an accurate, RAG-grounded answer to
-        // F4's "the policy rules it cited," just not narrowed to the model's own pick.
+        // retrieved for this query" — that's still an accurate, RAG-grounded answer for
+        // "the policy rules it cited," just not narrowed to the model's own pick.
         if (parsed.PolicyRulesCited.Count == 0 && citedClauses.Count > 0)
         {
             parsed.PolicyRulesCited = citedClauses.Select(c => c.RuleId).ToList();
@@ -97,8 +97,8 @@ public class GroqAiModelProvider : IAiModelProvider
 
     private static string BuildRequestBody(InvoicePayload invoice, string category, IReadOnlyList<PolicyClause> citedClauses)
     {
-        // N5: only the retrieved rule(s) go in the prompt — never the full policy.md, and
-        // never PolicyEngine's numeric thresholds (M12). "No specific rule retrieved" is a
+        // Only the retrieved rule(s) go in the prompt — never the full policy.md, and
+        // never PolicyEngine's numeric thresholds. "No specific rule retrieved" is a
         // real, valid state (e.g. Notes too sparse to match anything) — say so rather than
         // silently rendering an empty list the model might misread as "no rules apply."
         var policyContext = citedClauses.Count > 0
