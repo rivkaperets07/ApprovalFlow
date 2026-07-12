@@ -24,6 +24,11 @@ state store for durable invoice records, idempotency claims, and per-`TripId` bu
 The Gateway is the only service with a published port; DecisionEngine and PaymentService
 are reachable only via their sidecars (M6).
 
+Not pictured above, to keep the diagram focused on the request flow: every Gateway
+endpoint requires a role-scoped JWT (`submitter`/`approver`/`admin` — see the README's
+Authentication section), and all three backend services export OpenTelemetry traces and
+metrics to Jaeger/Prometheus (ADR 006).
+
 ## Sequence: Invoice Submission → Decision
 
 ```mermaid
@@ -52,8 +57,9 @@ sequenceDiagram
         DE->>PE: EvaluateAsync(invoice, category, aiResult)
         Note over PE: Risk threshold → confidence →<br/>category ceiling (flat / Meals formula / Travel cumulative)
         PE-->>DE: RouterDecision {Approved | Escalated, Reason}
-        DE->>Store: SaveState(invoice, Status, Reason, DecidedBy=AI)
-        DE->>Bus: publish invoice.decided
+        DE->>Store: ExecuteStateTransactionAsync(SaveState + outbox-publish invoice.decided)
+        Store->>Bus: invoice.decided
+        Note over DE,Bus: Outbox pattern (ADR 005): state write and event publish commit<br/>atomically — the event fires if and only if the write succeeds
         opt approved
             DE->>Bus: publish invoice.approved
         end
@@ -105,3 +111,6 @@ under [docs/adr/](adr/):
 | [ADR 002](adr/002-saga-payment-flow.md) | Saga pattern for the payment flow (reserve → transfer → compensate, idempotent claiming) |
 | [ADR 003](adr/003-policy-engine-and-swappable-ai-provider.md) | Deterministic PolicyEngine with a swappable AI provider (the numbers are config, the gate is code) |
 | [ADR 004](adr/004-file-based-policy-configuration.md) | File-based dynamic policy configuration (bind mount + reloadOnChange, vs. Dapr Configuration) |
+| [ADR 005](adr/005-outbox-and-bulkhead.md) | Dapr outbox pattern for the automatic decision path, plus a bulkhead isolating Gateway from a slow/down DecisionEngine |
+| [ADR 006](adr/006-opentelemetry-observability.md) | OpenTelemetry traces and metrics, exported to Jaeger and Prometheus |
+| [ADR 007](adr/007-rag-policy-retrieval.md) | RAG over docs/policy.md, scoped so the AI can never retrieve a numeric ceiling |

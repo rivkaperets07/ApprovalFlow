@@ -32,7 +32,7 @@ and ADRs, and [`docs/policy.md`](docs/policy.md) for the expense policy being en
 
 | Service | Responsibility |
 | --- | --- |
-| `src/GatewayService` | Single external entry point (rate-limited). Accepts submissions, exposes status/escalations/stats, forwards manual approve/reject. |
+| `src/GatewayService` | Single external entry point (rate-limited), JWT-authenticated with role-based access (submitter/approver/admin). Accepts submissions, exposes status/escalations/stats/audit trail, handles approve/reject/request-info, proxies vendor/policy admin actions. |
 | `src/DecisionEngine` | Subscribes to `invoice.submitted`; calls the AI provider, then `PolicyEngine`, to auto-approve or escalate. |
 | `src/PaymentService` | Subscribes to `invoice.approved`; runs the reserve → transfer → compensate Saga with idempotent, race-free claiming. |
 | `src/UI` | Static page to submit invoices and drive manual approve/reject. |
@@ -263,7 +263,8 @@ change the decision).
   immediately; the final decision is *pushed*, not polled for. The UI opens
   `GET /notifications/{trackingId}` (Server-Sent Events) right after submitting, and the
   Gateway wakes that connection the moment `invoice.decided` arrives — see
-  `IInvoiceNotifier` in `GatewayEndpoints.cs`. `GET /status/{trackingId}` still exists for
+  `IInvoiceNotifier` (`Core/Logic/InvoiceNotifier.cs`, woken from `PubSubHandlers.cs`, waited
+  on from `SubmissionEndpoints.cs`). `GET /status/{trackingId}` still exists for
   manual/repeated checks (F2) and as the UI's fallback if the SSE connection drops. Known
   limitation: the notifier is in-process, so it only works with a single Gateway instance —
   scaling the Gateway to multiple replicas would need a shared broker (e.g. Redis pub/sub)

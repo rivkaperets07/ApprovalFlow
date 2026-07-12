@@ -157,10 +157,13 @@ tells the LLM the category up front and asks it to judge coherence instead of cl
   two *genuinely distinct* submissions with identical content more than 60 seconds apart are
   (correctly) not deduped — there's no way to tell those apart from an intentional resubmit
   without an explicit idempotency key from the caller.
-- **F9, structured rule citations** — `RouterDecision.Reason` cites the triggering `rule_id`
-  in most branches (added for the flat categories in this pass — `SAAS-01`, `HW-01`,
-  `MEAL-01`), but it's still a string an auditor greps rather than a queryable `List<string>`
-  of rule ids on the decision.
+- **F9, structured rule citations — mostly closed (N5).** `InvoicePayload.AiPolicyRulesCited`
+  is now a queryable `List<string>` populated by `PolicyRetriever`'s RAG citations, surfaced
+  end-to-end through `/status`, `/escalations`, and the UI — not something an auditor has to
+  grep out of a sentence. What's still just embedded in a string:
+  `RouterDecision.Reason`'s own citation of the triggering `rule_id` for the flat categories
+  (`SAAS-01`, `HW-01`, `MEAL-01`) — that's `PolicyEngine`'s deterministic decision, a separate
+  code path from the AI's citations, and hasn't been given its own structured field.
 - **No document verification (by design, not oversight)** — the assignment states "No OCR
   required for invoices/expenses," so every field (`Vendor`, `TotalAmount`, `LineItems`,
   `TripId`, `InvoiceNumber`...) is submitter-typed text, never checked against an actual
