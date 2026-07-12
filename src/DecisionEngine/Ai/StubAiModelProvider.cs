@@ -83,7 +83,12 @@ public class StubAiModelProvider : IAiModelProvider
 
         if (string.Equals(category, "Travel", StringComparison.OrdinalIgnoreCase))
         {
-            result.LinkedTripId = ExtractTripId(invoice.Notes) ?? $"TRIP-{invoice.TrackingId}";
+            // The submitter-typed TripId field (structured, no OCR) takes priority over
+            // guessing one out of free-text Notes — the latter is only a fallback for
+            // callers that never set the field explicitly.
+            result.LinkedTripId = !string.IsNullOrWhiteSpace(invoice.TripId)
+                ? invoice.TripId
+                : ExtractTripId(invoice.Notes) ?? $"TRIP-{invoice.TrackingId}";
         }
 
         return Task.FromResult(result);

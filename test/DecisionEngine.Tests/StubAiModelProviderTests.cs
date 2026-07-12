@@ -86,6 +86,18 @@ public class StubAiModelProviderTests
     }
 
     [Fact]
+    public async Task Travel_StructuredTripIdField_TakesPriorityOverNotes()
+    {
+        var provider = new StubAiModelProvider(TestPolicyRetriever);
+        var invoice = Invoice("Delta Airlines", notes: "TripId: TRIP-FROM-NOTES");
+        invoice.TripId = "TRIP-FROM-FIELD";
+
+        var result = await provider.AnalyzeAsync(invoice, "Travel", default);
+
+        Assert.Equal("TRIP-FROM-FIELD", result.LinkedTripId);
+    }
+
+    [Fact]
     public async Task Travel_NoExplicitTripId_FallsBackToTrackingIdDerivedOne()
     {
         var provider = new StubAiModelProvider(TestPolicyRetriever);
