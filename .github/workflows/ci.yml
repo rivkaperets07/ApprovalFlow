@@ -51,7 +51,7 @@ jobs:
       # seeding done — so wait on the real login call verify.ps1 will make, not just /health.
       - name: Wait for Gateway and seeded demo accounts
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 80); do
             status=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5000/login \
               -H "Content-Type: application/json" \
               -d '{"Email":"admin@zionet.demo","Password":"Admin123!"}')

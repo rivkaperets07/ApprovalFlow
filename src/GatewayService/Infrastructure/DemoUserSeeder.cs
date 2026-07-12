@@ -20,10 +20,16 @@ public static class DemoUserSeeder
     // ordering signal), so on a cold start the sidecar is reliably still unreachable for a
     // moment after this app starts — verified against a real `docker compose up` run,
     // where a single unguarded attempt failed on every single boot, not occasionally.
+    // 60 attempts at 2s (~2 minutes) rather than the original 10x1s: a resource-constrained
+    // CI runner building and cold-starting all 11 containers at once (three of them added
+    // after this budget was first tuned locally) needs meaningfully longer than a warm
+    // local Docker Desktop does for the sidecar to answer — this was found failing CI's e2e
+    // job outright (the seeded admin login never succeeded, so the job's own wait loop
+    // always timed out) rather than merely running slow.
     public static async Task SeedAsync(IUserStore userStore, ILogger logger, CancellationToken cancellationToken = default)
     {
-        const int maxAttempts = 10;
-        var delay = TimeSpan.FromSeconds(1);
+        const int maxAttempts = 60;
+        var delay = TimeSpan.FromSeconds(2);
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
