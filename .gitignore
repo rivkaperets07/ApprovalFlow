@@ -26,3 +26,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Course assignment brief - reference material, not part of the deliverable
+ASSIGNMENT*.pdf
+ASSIGNMENT_text.txt
