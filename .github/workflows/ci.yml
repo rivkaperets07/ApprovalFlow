@@ -52,9 +52,14 @@ jobs:
       - name: Wait for Gateway and seeded demo accounts
         run: |
           for i in $(seq 1 80); do
+            # The step runs under `bash -e`, so a curl connection failure (exit 7, 56, ...)
+            # on an early attempt - expected, the container may not be accepting connections
+            # yet - would otherwise abort the whole script on iteration 1 and never retry.
+            # The `|| echo 000` swallows that and folds it into the normal "not ready yet"
+            # path instead of a fatal error.
             status=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5000/login \
               -H "Content-Type: application/json" \
-              -d '{"Email":"admin@zionet.demo","Password":"Admin123!"}')
+              -d '{"Email":"admin@zionet.demo","Password":"Admin123!"}' || echo "000")
             if [ "$status" = "200" ]; then
               echo "Gateway ready (admin login succeeded)."
               exit 0
