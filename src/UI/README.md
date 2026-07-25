@@ -1,11 +1,11 @@
-UI mínima para enviar facturas al `GatewayService`.
+Minimal UI for submitting invoices to the `GatewayService`.
 
-Cómo usar:
+How to use:
 
-1. Abrir `src/UI/index.html` en un navegador (doble clic o servir estáticamente).
-2. Ajustar el campo "Gateway URL" si tu `GatewayService` corre en otro puerto (p. ej. `http://localhost:5000`).
-3. Rellenar los datos de la factura y pulsar "Enviar".
+1. Open `src/UI/index.html` in a browser (double-click it, or run the full stack with `docker compose up` — it's already served by nginx, see `Dockerfile`/`nginx.conf`).
+2. Adjust the "Gateway URL" field if your `GatewayService` runs on a different port (e.g. `http://localhost:5000`).
+3. Attach a receipt photo and submit — Vendor/Amount/LineItems are read from the photo itself, not typed (dev branch only, see `docs/adr/008-receipt-photo-submission.md`).
 
-Notas:
-- Esta UI es estática y pensada para pruebas locales. Para integrarla en Docker, puedo añadir un contenedor web estático (nginx) y actualizar `docker-compose.yml` si quieres.
-- Los ejemplos de facturas están en `docs/sample-invoices.json`.
+Notes:
+- This UI is static, with no build step — `app.js`/`index.html` are plain JS/HTML.
+- Sample invoice fixtures are in `docs/sample-invoices.json`.
