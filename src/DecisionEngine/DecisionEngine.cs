@@ -2,6 +2,7 @@ using System.Globalization;
 using DecisionEngine.Ai;
 using DecisionEngine.Core.Logic;
 using DecisionEngine.Endpoints;
+using DecisionEngine.Ocr;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -48,9 +49,41 @@ if (string.Equals(aiProviderName, "Groq", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddHttpClient<IAiModelProvider, GroqAiModelProvider>();
 }
+else if (string.Equals(aiProviderName, "Gemini", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddHttpClient<IAiModelProvider, GeminiAiModelProvider>();
+}
 else
 {
     builder.Services.AddSingleton<IAiModelProvider, StubAiModelProvider>();
+}
+
+// dev-branch extension (docs/adr/008-receipt-photo-submission.md): two independent
+// switches, deliberately separate from AiProvider and from each other — OcrExtractor is a
+// local library, never an HttpClient; ReceiptFraudDetector mirrors the AiProvider pattern
+// but can be swapped on its own (e.g. real OCR + Stub fraud check while iterating).
+var ocrExtractorName = builder.Configuration.GetValue<string>("OcrExtractor", "Stub");
+if (string.Equals(ocrExtractorName, "Tesseract", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<IReceiptOcrExtractor, TesseractReceiptOcrExtractor>();
+}
+else
+{
+    builder.Services.AddSingleton<IReceiptOcrExtractor, StubReceiptOcrExtractor>();
+}
+
+var receiptFraudDetectorName = builder.Configuration.GetValue<string>("ReceiptFraudDetector", "Stub");
+if (string.Equals(receiptFraudDetectorName, "GroqVision", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddHttpClient<IReceiptFraudDetector, GroqVisionFraudDetector>();
+}
+else if (string.Equals(receiptFraudDetectorName, "GeminiVision", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddHttpClient<IReceiptFraudDetector, GeminiVisionFraudDetector>();
+}
+else
+{
+    builder.Services.AddSingleton<IReceiptFraudDetector, StubReceiptFraudDetector>();
 }
 
 // Traces + metrics, exported to the local Jaeger/Prometheus stack (docker-compose.yml).

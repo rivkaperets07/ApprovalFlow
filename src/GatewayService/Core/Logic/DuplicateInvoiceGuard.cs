@@ -8,6 +8,11 @@ using Dapr.Client;
 /// match on three fields the submitter controls — a much higher-confidence signal, so it
 /// rejects outright rather than escalating. No time window: an invoice number should never
 /// legitimately repeat for the same vendor and amount.
+///
+/// Orphaned, not deleted, on the dev branch (docs/adr/008): photo-only submission means
+/// Vendor/InvoiceNumber/TotalAmount aren't known yet at /submit time, so nothing calls this
+/// anymore there - see DuplicatePhotoGuard for what replaced it on that path. Left in place
+/// since main still submits these fields directly and could still call this.
 /// </summary>
 public static class DuplicateInvoiceGuard
 {

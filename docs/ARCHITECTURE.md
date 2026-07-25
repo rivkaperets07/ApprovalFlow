@@ -114,3 +114,4 @@ under [docs/adr/](adr/):
 | [ADR 005](adr/005-outbox-and-bulkhead.md) | Dapr outbox pattern for the automatic decision path, plus a bulkhead isolating Gateway from a slow/down DecisionEngine |
 | [ADR 006](adr/006-opentelemetry-observability.md) | OpenTelemetry traces and metrics, exported to Jaeger and Prometheus |
 | [ADR 007](adr/007-rag-policy-retrieval.md) | RAG over docs/policy.md, scoped so the AI can never retrieve a numeric ceiling |
+| [ADR 008](adr/008-receipt-photo-submission.md) | *(dev branch only)* Receipt-photo-only submission — local OCR extracts fields, a narrow AI judges only whether the photo looks genuine |

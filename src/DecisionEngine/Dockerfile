@@ -13,7 +13,10 @@ RUN dotnet publish DecisionEngine/DecisionEngine.csproj -c Release -o /app/out
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
-RUN apt-get update && apt-get install -y wget curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# tesseract-ocr + its English data: dev-branch extension (docs/adr/008-receipt-photo-submission.md),
+# TesseractReceiptOcrExtractor shells out to the `tesseract` CLI rather than binding its
+# native library directly.
+RUN apt-get update && apt-get install -y wget curl ca-certificates tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 # Install a fixed Dapr CLI version and runtime to avoid installer parsing issues
 RUN wget -q https://github.com/dapr/cli/releases/download/v1.13.0/dapr_linux_amd64.tar.gz -O /tmp/dapr-cli.tar.gz \
  	 && set -eux; \

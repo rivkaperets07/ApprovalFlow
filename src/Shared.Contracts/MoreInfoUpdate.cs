@@ -15,4 +15,10 @@ public class MoreInfoUpdate
     public string? Currency { get; set; }
     public string? TripId { get; set; }
     public bool? IsPremiumTravel { get; set; }
+
+    // dev-branch extension: lets a submitter asked to retake an unreadable receipt photo
+    // (GLOBAL-RECEIPT-UNREADABLE) attach a clearer one via this same resume path, without
+    // a new endpoint. Not a ceiling-driving field by itself - Vendor/TotalAmount only ever
+    // change as a side effect of re-running OCR on the new photo, same as any other retry.
+    public string? ReceiptImageDataUri { get; set; }
 }

@@ -78,6 +78,10 @@
     environment:
       - DAPR_HTTP_ENDPOINT=http://localhost:3500
       - AiProvider=${AI_PROVIDER:-Stub}
+      # dev-branch (docs/adr/008): independent of AiProvider and of each other, same
+      # Stub-default pattern - override via .env/shell for a real OCR/fraud-check run.
+      - OcrExtractor=${OCR_EXTRACTOR:-Stub}
+      - ReceiptFraudDetector=${RECEIPT_FRAUD_DETECTOR:-Stub}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
       - redis
@@ -136,6 +140,9 @@
       # Read by the secretstores.local.env component so GroqAiModelProvider can
       # fetch it via DaprClient.GetSecretAsync. Empty is fine while AiProvider=Stub.
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      # Same idea, for GeminiAiModelProvider/GeminiVisionFraudDetector. Empty is fine
+      # while AiProvider/ReceiptFraudDetector aren't set to Gemini/GeminiVision.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     depends_on:
       - decision-engine
       - redis

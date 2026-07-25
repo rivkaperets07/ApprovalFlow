@@ -23,12 +23,23 @@ public static class SubmissionEndpoints
         app.MapPost("/provide-info/{trackingId}", ProvideInfoAsync).RequireAuthorization(AuthPolicies.Submitter);
     }
 
-    private static async Task<IResult> SubmitAsync([FromBody] InvoicePayload invoice, DaprClient daprClient, ISubmissionStore submissionStore, IConfiguration config, ILogger<Program> logger)
+    // dev-branch extension (docs/adr/008-receipt-photo-submission.md): a receipt photo is
+    // now the only way to submit — Vendor/TotalAmount are populated later by OCR, in
+    // DecisionEngine, never by the caller directly. Allowing both a photo and typed
+    // Vendor/TotalAmount to coexist would leave a way to bypass verification entirely (just
+    // keep typing), so the two are rejected together outright, not merely de-prioritized.
+    private static async Task<IResult> SubmitAsync([FromBody] InvoicePayload invoice, DaprClient daprClient, ISubmissionStore submissionStore, ILogger<Program> logger)
     {
-        if (invoice is null || string.IsNullOrWhiteSpace(invoice.Vendor) || invoice.TotalAmount <= 0)
+        if (invoice is null || string.IsNullOrWhiteSpace(invoice.ReceiptImageDataUri))
         {
-            logger.LogWarning("Invalid submission received.");
-            return Results.BadRequest(new { error = "Vendor, category and TotalAmount must be provided." });
+            logger.LogWarning("Invalid submission received: no receipt photo.");
+            return Results.BadRequest(new { error = "A receipt photo (ReceiptImageDataUri) is required." });
+        }
+
+        if (!string.IsNullOrWhiteSpace(invoice.Vendor) || invoice.TotalAmount != 0)
+        {
+            logger.LogWarning("Rejected a submission combining a receipt photo with typed Vendor/TotalAmount.");
+            return Results.BadRequest(new { error = "Vendor and amount come from the receipt photo, not typed input — remove them and submit the photo alone." });
         }
 
         invoice.TrackingId ??= Guid.NewGuid().ToString();
@@ -56,79 +67,37 @@ public static class SubmissionEndpoints
             return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
         }
 
-        // Backstop: catches an accidental repeat even when the caller doesn't reuse the
-        // same TrackingId and doesn't supply an InvoiceNumber for GLOBAL-DUP to key off —
-        // e.g. an API client minting a fresh TrackingId per call, or a double-click that
-        // slips past the UI's guard. Short time window (60s) so it never blocks two people
-        // legitimately expensing the same vendor/amount/category later.
-        var recentDuplicateOf = await RecentSubmissionGuard.TryClaimAsync(daprClient, DaprComponents.StateStore, invoice.Vendor, invoice.TotalAmount, invoice.Category, invoice.Notes, invoice.TrackingId);
-        if (recentDuplicateOf is not null)
+        // GLOBAL-DUP, dev-branch shape (docs/adr/008): DuplicateInvoiceGuard's vendor+
+        // invoiceNumber+total key needs fields that don't exist yet at this point (OCR runs
+        // later, in DecisionEngine, to keep this endpoint non-blocking per M8) - and even if
+        // it ran here, an OCR'd invoice number is often just a small per-register counter on
+        // an informal receipt, so trusting it alone risks rejecting two different genuine
+        // expenses that happen to share one. Keying on the photo's own bytes instead needs
+        // nothing from OCR and never false-positives between two different photos.
+        if (await DuplicatePhotoGuard.IsDuplicateAsync(daprClient, DaprComponents.StateStore, invoice.ReceiptImageDataUri))
         {
-            logger.LogWarning("Submission treated as an accidental repeat of invoice {OriginalTrackingId} (same vendor/amount/category/notes within 60s).", recentDuplicateOf);
-            return Results.Accepted($"/status/{recentDuplicateOf}", new { TrackingId = recentDuplicateOf });
+            logger.LogWarning("Rejected invoice {TrackingId}: this receipt photo was already submitted.", invoice.TrackingId);
+            return Results.BadRequest(new { error = "This receipt photo has already been submitted (GLOBAL-DUP)." });
         }
 
-        // GLOBAL-DUP (docs/policy.md): an exact repeat of Vendor + InvoiceNumber +
-        // TotalAmount is rejected outright — no second payment. Only applies when
-        // InvoiceNumber is supplied (it's optional; see InvoicePayload for why this alone
-        // isn't the real double-payment protection). Checked before GLOBAL-FRAUD since
-        // an exact three-field match is a far more certain signal than the round-number
-        // heuristic.
-        if (!string.IsNullOrWhiteSpace(invoice.InvoiceNumber))
-        {
-            var isDuplicateInvoice = await DuplicateInvoiceGuard.IsDuplicateAsync(daprClient, DaprComponents.StateStore, invoice.Vendor, invoice.InvoiceNumber, invoice.TotalAmount);
-            if (isDuplicateInvoice)
-            {
-                invoice.Status = InvoiceStatus.Duplicate;
-                invoice.Reason = $"Rejected: invoice '{invoice.InvoiceNumber}' from '{invoice.Vendor}' for {invoice.TotalAmount:C} was already submitted (GLOBAL-DUP).";
-                invoice.DecidedBy = DecidedBy.System;
-
-                // Not added to the escalation queue — this is an outright reject, not a
-                // human-review item; no rubber-stamping a call the router can make itself.
-                await PersistSubmissionAsync(daprClient, submissionStore, invoice);
-
-                logger.LogWarning("Invoice {TrackingId} rejected as a duplicate of invoice '{InvoiceNumber}' (GLOBAL-DUP).", invoice.TrackingId, invoice.InvoiceNumber);
-                return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
-            }
-        }
-
-        // GLOBAL-FRAUD (docs/policy.md): a round-number amount to a vendor the company has
-        // never dealt with before is a fraud-pattern signal. Judged solely on this
-        // submission's own attributes, never by comparing it to any other submission —
-        // two different people legitimately expensing the same known vendor for the same
-        // amount must never trip this.
-        if (FraudGuard.IsLikelySuspicious(invoice.Vendor, invoice.TotalAmount, VendorDirectory.LoadKnownVendors(config)))
-        {
-            invoice.Status = InvoiceStatus.Escalated;
-            invoice.Reason = $"Blocked: round-number amount to an unrecognized vendor '{invoice.Vendor}' (GLOBAL-FRAUD guardrail).";
-            invoice.DecidedBy = DecidedBy.System;
-
-            await PersistSubmissionAsync(daprClient, submissionStore, invoice, addToEscalationQueue: true);
-
-            logger.LogWarning("Invoice {TrackingId} blocked by GLOBAL-FRAUD guardrail (round-number amount, unrecognized vendor).", invoice.TrackingId);
-            return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
-        }
+        // Known, accepted gap for this dev-branch increment (ADR 008): RecentSubmissionGuard/
+        // FraudGuard still key on Vendor/TotalAmount at submit time — those fields don't
+        // exist yet (OCR runs in DecisionEngine, after publish). PolicyEngine's own
+        // GLOBAL-VENDOR/FX/ceiling checks still run in full once OCR populates them, so M12
+        // is untouched — only these two Gateway-side heuristics remain the accepted gap.
 
         await PersistSubmissionAsync(daprClient, submissionStore, invoice);
         await daprClient.PublishEventAsync(DaprComponents.PubSub, Topics.InvoiceSubmitted, invoice);
 
-        logger.LogInformation("Invoice submitted {TrackingId} by {Vendor}.", invoice.TrackingId, invoice.Vendor);
+        logger.LogInformation("Invoice submitted {TrackingId} (receipt photo, pending OCR).", invoice.TrackingId);
         return Results.Accepted($"/status/{invoice.TrackingId}", new { invoice.TrackingId });
     }
 
-    // Every submission outcome persists identically: the invoice record, the TrackingId
-    // idempotency flag, and membership in the all-submissions index (the dashboard's input);
-    // gate-escalated outcomes (GLOBAL-FRAUD) additionally join the escalation queue. One
-    // helper so the three SubmitAsync outcomes can't drift apart.
-    private static async Task PersistSubmissionAsync(DaprClient daprClient, ISubmissionStore submissionStore, InvoicePayload invoice, bool addToEscalationQueue = false)
+    private static async Task PersistSubmissionAsync(DaprClient daprClient, ISubmissionStore submissionStore, InvoicePayload invoice)
     {
         await daprClient.SaveStateAsync(DaprComponents.StateStore, StateKeys.Invoice(invoice.TrackingId!), invoice);
         await submissionStore.MarkSubmittedAsync(invoice.TrackingId!);
         await StateIndex.AddAsync(daprClient, DaprComponents.StateStore, GatewayIndexKeys.Submitted, invoice.TrackingId!);
-        if (addToEscalationQueue)
-        {
-            await StateIndex.AddAsync(daprClient, DaprComponents.StateStore, GatewayIndexKeys.Escalated, invoice.TrackingId!);
-        }
     }
 
     // Proxies DecisionEngine's /vendors via Dapr's synchronous service invocation — the one
@@ -187,6 +156,8 @@ public static class SubmissionEndpoints
             invoice.AiSuggestedCategory,
             invoice.AiConfidence,
             invoice.AiPolicyRulesCited,
+            invoice.ReceiptVerificationVerdict,
+            invoice.ReceiptVerificationConfidence,
             invoice.PaymentStatus,
             invoice.PaymentMessage,
             invoice.SubmittedAt
@@ -279,6 +250,12 @@ public static class SubmissionEndpoints
             if (update.Currency is not null) invoice.Currency = update.Currency;
             if (update.TripId is not null) invoice.TripId = update.TripId;
             if (update.IsPremiumTravel.HasValue) invoice.IsPremiumTravel = update.IsPremiumTravel.Value;
+            // dev-branch extension (docs/adr/008-receipt-photo-submission.md): lets a
+            // submitter asked to retake an unreadable photo (GLOBAL-RECEIPT-UNREADABLE)
+            // attach a clearer one here instead of a new endpoint. Vendor/TotalAmount are
+            // NOT reset — DecisionEngine's OCR step overwrites them again from this new
+            // photo on the next evaluation, same as the original submission did.
+            if (update.ReceiptImageDataUri is not null) invoice.ReceiptImageDataUri = update.ReceiptImageDataUri;
         }
 
         invoice.Status = InvoiceStatus.Pending;

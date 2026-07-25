@@ -25,4 +25,11 @@
     <Using Include="ApprovalFlow.Contracts" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets DecisionEngine.Tests exercise EvaluateAndPublishAsync's internal order of
+         operations (e.g. the GLOBAL-RECEIPT-UNREADABLE short-circuit) directly, without
+         standing up a full Dapr-backed WebApplicationFactory just for this one method. -->
+    <InternalsVisibleTo Include="DecisionEngine.Tests" />
+  </ItemGroup>
+
 </Project>

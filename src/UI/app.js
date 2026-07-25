@@ -216,89 +216,24 @@ function renderStatusCard(container, invoice) {
     const policyRulesRow = invoice.aiPolicyRulesCited && invoice.aiPolicyRulesCited.length > 0
         ? `<div class="status-row"><span>Policy rules cited</span><span>${invoice.aiPolicyRulesCited.join(', ')}</span></div>`
         : '';
+    // ReceiptVerificationVerdict/Confidence only ever get set once OCR has
+    // succeeded and the fraud detector has actually run — see ADR 008.
+    const receiptRow = invoice.receiptVerificationVerdict
+        ? `<div class="status-row"><span>Receipt photo</span><span>${invoice.receiptVerificationVerdict} (confidence ${invoice.receiptVerificationConfidence ?? '—'})</span></div>`
+        : '';
     container.innerHTML = `
         <div class="status-row"><span>Tracking ID</span><span>${invoice.trackingId ?? ''}</span></div>
         <div class="status-row"><span>Decision</span>${badge(invoice.status)}</div>
         <div class="status-row"><span>Decided by</span><span>${invoice.decidedBy ?? '—'}</span></div>
         <div class="status-row"><span>Reason</span><span>${invoice.reason ?? '—'}</span></div>
         <div class="status-row"><span>Vendor / Amount</span><span>${invoice.vendor ?? ''} / ${invoice.totalAmount ?? ''}</span></div>
+        ${receiptRow}
         ${aiCategoryRow}
         ${policyRulesRow}
         <div class="status-row"><span>Payment</span>${badge(invoice.paymentStatus)}</div>
         ${invoice.paymentMessage ? `<div class="status-row"><span>Payment detail</span><span>${invoice.paymentMessage}</span></div>` : ''}
     `;
 }
-
-// --- Vendor-driven conditional fields (Meals entertainment / Travel TripId) ---
-// Category is no longer a free-text field the submitter fills in — it's resolved
-// from the vendor directory (same source PolicyEngine's GLOBAL-VENDOR uses), via
-// vendorCategories built in loadVendors() below. An unrecognized vendor shows
-// neither block; picking a known one reveals whichever applies.
-function updateVendorCategoryHints() {
-    const vendor = document.getElementById('vendor').value.trim().toLowerCase();
-    const category = (vendorCategories[vendor] || '').toLowerCase();
-    document.getElementById('mealsField').classList.toggle('visible', category.includes('meal'));
-    document.getElementById('travelField').classList.toggle('visible', category.includes('travel'));
-}
-document.getElementById('vendor').addEventListener('input', updateVendorCategoryHints);
-
-document.getElementById('isClientEntertainment').addEventListener('change', (e) => {
-    document.getElementById('clientEntertainmentFields').style.display = e.target.checked ? 'block' : 'none';
-});
-
-// --- Line items (GLOBAL-RECEIPT / GLOBAL-MATH: no OCR, the submitter provides
-// the itemized breakdown directly instead of the AI guessing it) ---
-function addLineItemRow(description = '', amount = '') {
-    const container = document.getElementById('lineItemsContainer');
-    const row = document.createElement('div');
-    row.className = 'line-item-row';
-    row.innerHTML = `
-        <input type="text" class="line-item-desc" placeholder="Description" value="${description}" />
-        <input type="number" step="0.01" class="line-item-amount" placeholder="0.00" value="${amount}" />
-        <button type="button" class="line-item-remove" title="Remove">×</button>
-    `;
-    row.querySelector('.line-item-remove').addEventListener('click', () => {
-        row.remove();
-        updateLineItemsHint();
-    });
-    row.querySelectorAll('input').forEach(input => input.addEventListener('input', updateLineItemsHint));
-    container.appendChild(row);
-    updateLineItemsHint();
-}
-document.getElementById('addLineItemBtn').addEventListener('click', () => addLineItemRow());
-
-function collectLineItems() {
-    return Array.from(document.querySelectorAll('.line-item-row')).map(row => ({
-        Description: row.querySelector('.line-item-desc').value,
-        Amount: parseFloat(row.querySelector('.line-item-amount').value) || 0
-    })).filter(item => item.Description || item.Amount);
-}
-
-function updateLineItemsHint() {
-    const hint = document.getElementById('lineItemsHint');
-    const requiredTag = document.getElementById('lineItemsRequired');
-    const total = parseFloat(document.getElementById('totalAmount').value) || 0;
-    const items = collectLineItems();
-    const itemsSum = items.reduce((sum, i) => sum + i.Amount, 0);
-
-    requiredTag.style.display = total > 25 ? 'inline' : 'none';
-
-    if (items.length === 0) {
-        hint.textContent = total > 25
-            ? 'No line items yet — required for amounts over $25 (GLOBAL-RECEIPT), or this will be escalated.'
-            : 'No line items yet (optional under $25).';
-        hint.classList.toggle('warn', total > 25);
-        return;
-    }
-
-    const tolerance = Math.min(total * 0.02, 10);
-    const variance = Math.abs(total - itemsSum);
-    const withinTolerance = variance <= tolerance;
-    hint.textContent = `Line items total $${itemsSum.toFixed(2)} vs. invoice total $${total.toFixed(2)}` +
-        (withinTolerance ? ' — OK.' : ` — off by $${variance.toFixed(2)} (allowed: $${tolerance.toFixed(2)}, GLOBAL-MATH).`);
-    hint.classList.toggle('warn', !withinTolerance);
-}
-document.getElementById('totalAmount').addEventListener('input', updateLineItemsHint);
 
 // --- TrackingId: generated client-side and held steady across
 // retries of the *same* submission attempt, so an accidental double POST
@@ -316,6 +251,31 @@ function generateTrackingId() {
 }
 document.getElementById('trackingId').value = generateTrackingId();
 
+// --- Receipt photo -> base64 data URI (the only way Vendor/TotalAmount/
+// LineItems/Currency get populated on this branch — see ADR 008). Gateway
+// rejects any submission that also carries a typed Vendor/TotalAmount.
+function readFileAsDataUri(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+document.getElementById('receiptImage').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    const preview = document.getElementById('receiptPreview');
+    if (!file) {
+        preview.style.display = 'none';
+        return;
+    }
+    readFileAsDataUri(file).then((dataUri) => {
+        preview.src = dataUri;
+        preview.style.display = 'block';
+    });
+});
+
 // --- Submit + auto-poll ---------------------------------------------
 document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -325,23 +285,21 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     const trackingIdField = document.getElementById('trackingId');
     if (!trackingIdField.value) trackingIdField.value = generateTrackingId(); // safety net
 
-    const tripIdValue = document.getElementById('tripId').value;
-    const isClientEntertainment = document.getElementById('isClientEntertainment').checked;
+    const receiptFile = document.getElementById('receiptImage').files[0];
+    const statusBox = document.getElementById('submitStatus');
+    if (!receiptFile) {
+        statusBox.style.display = 'block';
+        statusBox.textContent = 'A receipt photo is required.';
+        return;
+    }
+    const receiptImageDataUri = await readFileAsDataUri(receiptFile);
+
     const payload = {
         TrackingId: trackingIdField.value,
-        Vendor: document.getElementById('vendor').value,
-        InvoiceNumber: document.getElementById('invoiceNumber').value || null,
-        TotalAmount: parseFloat(document.getElementById('totalAmount').value),
+        ReceiptImageDataUri: receiptImageDataUri,
         Notes: document.getElementById('description').value,
-        Currency: document.getElementById('currency').value || null,
-        TripId: tripIdValue || null,
-        IsPremiumTravel: document.getElementById('isPremiumTravel').checked,
-        IsClientEntertainment: isClientEntertainment,
-        BusinessJustification: isClientEntertainment ? (document.getElementById('businessJustification').value || null) : null,
-        ClientName: isClientEntertainment ? (document.getElementById('clientName').value || null) : null,
-        LineItems: collectLineItems()
+        TripId: document.getElementById('tripId').value || null
     };
-    const statusBox = document.getElementById('submitStatus');
     statusBox.style.display = 'block';
     statusBox.textContent = 'Submitting...';
 
@@ -358,8 +316,10 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     if (!submitResult.ok || !submitResult.data?.trackingId) {
         // Deliberately do not rotate trackingIdField.value here: if the submitter
         // retries after a failure, the retry should carry the same id so the
-        // Gateway can tell it's the same attempt.
-        statusBox.textContent = `Error: HTTP ${submitResult.status}`;
+        // Gateway can tell it's the same attempt. The Gateway always sends a plain-English
+        // { error } body for a 400 (missing photo, mixed typed/photo, duplicate photo) —
+        // show that instead of a bare status code.
+        statusBox.textContent = submitResult.data?.error || `Error: HTTP ${submitResult.status}`;
         return;
     }
 
@@ -437,11 +397,14 @@ async function loadEscalations() {
             <td>${item.aiPolicyRulesCited && item.aiPolicyRulesCited.length > 0 ? item.aiPolicyRulesCited.join(', ') : '<span class="empty">—</span>'}</td>
             <td>${item.totalAmount}</td>
             <td>${item.reason}</td>
+            <td>${item.receiptImageDataUri
+                ? `<img src="${item.receiptImageDataUri}" style="max-width:80px; max-height:80px; border-radius:4px; cursor:zoom-in;" title="${item.receiptVerificationVerdict ?? ''} (confidence ${item.receiptVerificationConfidence ?? '—'})" onclick="window.open(this.src)" onerror="this.outerHTML='<span class=&quot;empty&quot;>${item.receiptVerificationVerdict ?? 'not a real image'}</span>'" />`
+                : '<span class="empty">—</span>'}</td>
         </tr>
     `).join('');
     list.innerHTML = `
         <table>
-            <thead><tr><th>Tracking ID</th><th>Vendor</th><th>AI Category (confidence)</th><th>Policy Rules Cited</th><th>Amount</th><th>Reason</th></tr></thead>
+            <thead><tr><th>Tracking ID</th><th>Vendor</th><th>AI Category (confidence)</th><th>Policy Rules Cited</th><th>Amount</th><th>Reason</th><th>Receipt</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
     `;
@@ -449,15 +412,11 @@ async function loadEscalations() {
 document.getElementById('refreshEscalationsBtn').addEventListener('click', loadEscalations);
 
 // --- Known vendors ---------------------------------------------
-let vendorCategories = {};
 async function loadVendors() {
     const list = document.getElementById('vendorsList');
-    const datalist = document.getElementById('knownVendors');
     const { ok, data } = await callApi('vendors');
     if (!ok || !data || data.length === 0) {
         list.innerHTML = '<p class="empty">No known vendors configured.</p>';
-        datalist.innerHTML = '';
-        vendorCategories = {};
         return;
     }
     const rows = data.map(v => `<tr><td>${v.vendor}</td><td>${v.category}</td></tr>`).join('');
@@ -467,9 +426,6 @@ async function loadVendors() {
             <tbody>${rows}</tbody>
         </table>
     `;
-    datalist.innerHTML = data.map(v => `<option value="${v.vendor}"></option>`).join('');
-    vendorCategories = Object.fromEntries(data.map(v => [v.vendor.toLowerCase(), v.category]));
-    updateVendorCategoryHints();
 }
 document.getElementById('refreshVendorsBtn').addEventListener('click', loadVendors);
 
@@ -500,9 +456,8 @@ document.getElementById('requestInfoBtn').addEventListener('click', async () => 
 });
 
 // --- "Provide More Info": look up the invoice's category on Tracking ID and show
-// only the fields that category actually needs, same idea as the Submit form's
-// updateVendorCategoryHints but driven by the stored invoice instead of the vendor
-// field.
+// only the fields that category actually needs (resolved server-side from OCR,
+// since there's no vendor field here to drive it client-side anymore).
 async function lookupInfoCategory() {
     const id = document.getElementById('infoTrackingId').value.trim();
     const stateEl = document.getElementById('infoCategoryState');
@@ -573,6 +528,7 @@ function collectInfoLineItems() {
 document.getElementById('provideInfoBtn').addEventListener('click', async () => {
     const id = document.getElementById('infoTrackingId').value.trim();
     const orNull = (value) => value ? value : null;
+    const infoReceiptFile = document.getElementById('infoReceiptImage').files[0];
     const payload = {
         Notes: orNull(document.getElementById('infoNotes').value),
         LineItems: collectInfoLineItems(),
@@ -580,7 +536,8 @@ document.getElementById('provideInfoBtn').addEventListener('click', async () => 
         ClientName: orNull(document.getElementById('infoClientName').value),
         Currency: orNull(document.getElementById('infoCurrency').value),
         TripId: orNull(document.getElementById('infoTripId').value),
-        IsPremiumTravel: document.getElementById('infoIsPremiumTravel').checked ? true : null
+        IsPremiumTravel: document.getElementById('infoIsPremiumTravel').checked ? true : null,
+        ReceiptImageDataUri: infoReceiptFile ? await readFileAsDataUri(infoReceiptFile) : null
     };
     const { status, data } = await callApi(`provide-info/${id}`, 'POST', payload);
     document.getElementById('provideInfoResult').textContent = `HTTP ${status}\n${JSON.stringify(data, null, 2)}`;
@@ -616,4 +573,3 @@ document.getElementById('refreshStatsBtn').addEventListener('click', loadStats);
 // Initial load: sign in with the default role first, then the panels load
 // from inside login() once a token is available.
 login();
-updateLineItemsHint();

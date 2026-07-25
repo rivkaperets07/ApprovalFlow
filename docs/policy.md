@@ -47,9 +47,11 @@ Base currency: **USD**. All amounts are converted to USD at the **submission-dat
 | `GLOBAL-RECEIPT` | A **receipt is required for any expense over $25**. Missing → *missing info* → escalate. |
 | `GLOBAL-VENDOR` | A **new / unknown vendor** is **always reviewed** by a human, regardless of amount/category. |
 | `GLOBAL-FX` | Foreign-currency items are converted to USD. A converted amount above the autonomy ceiling (or any FX item over **$1,000**) is a **hard stop** → human. |
-| `GLOBAL-DUP` | A **duplicate** (same `vendor` + `invoiceNumber` + `total`) is rejected as a duplicate — **no second payment**. |
+| `GLOBAL-DUP` | A **duplicate** is rejected outright — **no second payment**. On `main` (typed submission): same `vendor` + `invoiceNumber` + `total`. *(dev branch, docs/adr/008)* Vendor/invoiceNumber aren't known at submit time on the photo-only path, and an OCR'd invoice number on an informal receipt is often just a small per-register counter that can legitimately repeat across different receipts — so `dev` instead rejects an exact re-submission of the same receipt **photo** (hash of `ReceiptImageDataUri`), which needs nothing from OCR and never collides between two genuinely different photos. |
 | `GLOBAL-MATH` | The line items + tax **must reconcile** to `total`. A mismatch is a hard stop → escalate (never auto-approve). |
 | `GLOBAL-FRAUD` | Fraud-pattern signals (round-number to a brand-new vendor, no line-item detail, off-hours, padded quantities) are a **hard stop** → human review with the signal recorded. |
+| `GLOBAL-RECEIPT-UNREADABLE` | *(dev branch, docs/adr/008)* If local OCR can't confidently read a vendor and total from a submitted receipt photo, the submission auto-resolves to `NeedsInfo` — retake and resubmit. Never reaches an AI fraud check or a human. |
+| `GLOBAL-RECEIPT-FRAUD` | *(dev branch, docs/adr/008)* Once OCR succeeds, an AI judges whether the receipt photo itself looks fabricated. A Suspicious verdict is a **hard stop** → human review — never auto-rejected. A Genuine verdict never itself approves; it only lets the OCR'd fields flow into the ordinary category rules. |
 
 ---
 
@@ -62,7 +64,7 @@ resolving the central dilemma means *choosing your own* and defending them.
 |---|---|---|
 | `AUTONOMY-CEILING` | **$250** | The agent may auto-approve only when the USD amount is **≤ $250**. Above this → human, *even at confidence 1.0*. |
 | `AUTONOMY-CONFIDENCE` | **0.80** | The agent may auto-approve only when its `confidence` is **≥ 0.80**. Below → human. |
-| `AUTONOMY-HARDSTOPS` | — | Regardless of amount/confidence, these **always** force a human: new/unknown vendor (`GLOBAL-VENDOR`), FX hard stop (`GLOBAL-FX`), math mismatch (`GLOBAL-MATH`), any fraud signal (`GLOBAL-FRAUD`), missing required receipt (`GLOBAL-RECEIPT`), missing required info (`MEAL-01`/`MEAL-02`). |
+| `AUTONOMY-HARDSTOPS` | — | Regardless of amount/confidence, these **always** force a human: new/unknown vendor (`GLOBAL-VENDOR`), FX hard stop (`GLOBAL-FX`), math mismatch (`GLOBAL-MATH`), any fraud signal (`GLOBAL-FRAUD`), missing required receipt (`GLOBAL-RECEIPT`), missing required info (`MEAL-01`/`MEAL-02`), and, on the dev branch only, a suspicious receipt photo (`GLOBAL-RECEIPT-FRAUD`). `GLOBAL-RECEIPT-UNREADABLE` is the one exception in this list — it routes to `NeedsInfo` for a retake, never to a human. |
 
 **An item is `auto_approve` only if ALL hold:** amount ≤ `AUTONOMY-CEILING` · `confidence` ≥ `AUTONOMY-CONFIDENCE` ·
 policy-compliant for its category · **no** hard stop. Otherwise it is `human_review` (or `reject` for a

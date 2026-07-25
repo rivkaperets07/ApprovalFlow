@@ -164,17 +164,20 @@ tells the LLM the category up front and asks it to judge coherence instead of cl
   `RouterDecision.Reason`'s own citation of the triggering `rule_id` for the flat categories
   (`SAAS-01`, `HW-01`, `MEAL-01`) — that's `PolicyEngine`'s deterministic decision, a separate
   code path from the AI's citations, and hasn't been given its own structured field.
-- **No document verification (by design, not oversight)** — the assignment states "No OCR
-  required for invoices/expenses," so every field (`Vendor`, `TotalAmount`, `LineItems`,
-  `TripId`, `InvoiceNumber`...) is submitter-typed text, never checked against an actual
-  invoice image. Nothing stops a submitter from inventing numbers wholesale. This is why the
-  system's real defenses (`TrackingId` idempotency, `RecentSubmissionGuard`, the global
-  guardrails above) are built to not depend on any typed field being true — see the
-  `GLOBAL-DUP` caveat. A real fix — photo/receipt upload, OCR extraction, and an
-  auto-`NeedsInfo` when the image doesn't match or isn't legible — would close this gap
-  properly, but it's a genuine scope change from the assignment's current boundary, not a
-  small addition: new upload surface, an OCR/vision provider, a decision on what gets
-  verified against what, and how a failed read is distinguished from a failed policy check.
+- **No document verification (by design, not oversight) — closed on the `dev` branch,
+  still true of `main`.** The assignment states "No OCR required for invoices/expenses,"
+  so on `main` every field (`Vendor`, `TotalAmount`, `LineItems`, `TripId`,
+  `InvoiceNumber`...) is submitter-typed text, never checked against an actual invoice
+  image; nothing stops a submitter from inventing numbers wholesale. The system's real
+  defenses there (`TrackingId` idempotency, `RecentSubmissionGuard`, the global guardrails
+  above) are built to not depend on any typed field being true — see the `GLOBAL-DUP`
+  caveat. On `dev` only (see `docs/adr/008-receipt-photo-submission.md`), this is closed
+  properly rather than worked around: a receipt photo is now the *only* submission path —
+  typed `Vendor`/`TotalAmount` is rejected outright, not merely de-prioritized, because a
+  "people can't lie" claim is meaningless if lying is still one field away. Local OCR
+  extracts the fields; a narrowly-scoped AI judges only whether the photo itself looks
+  fabricated. Neither can approve anything — `PolicyEngine` never learns an invoice came
+  from a photo, so M12 holds exactly as it did before this existed.
 
 ## Tuning without redeploy
 

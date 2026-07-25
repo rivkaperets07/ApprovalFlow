@@ -67,7 +67,10 @@ public static class ApproverEndpoints
                 invoice.AiConfidence,
                 invoice.AiPolicyRulesCited,
                 invoice.TotalAmount,
-                invoice.Reason
+                invoice.Reason,
+                invoice.ReceiptImageDataUri,
+                invoice.ReceiptVerificationVerdict,
+                invoice.ReceiptVerificationConfidence
             });
         return Results.Ok(items);
     }

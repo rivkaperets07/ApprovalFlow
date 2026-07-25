@@ -18,6 +18,14 @@ public class InvoicePayload
     public string? Reason { get; set; }
     public string? DecidedBy { get; set; }
 
+    // dev-branch extension (see docs/adr/008-receipt-photo-submission.md): the receipt
+    // photo, and the only way Vendor/TotalAmount get populated on this branch — a local
+    // OCR step fills them in from this image before anything else runs. Never returned by
+    // any endpoint (it's write-only from the API's point of view) - see GetStatusAsync.
+    public string? ReceiptImageDataUri { get; set; }
+    public string? ReceiptVerificationVerdict { get; set; }
+    public double? ReceiptVerificationConfidence { get; set; }
+
     // Payment outcome, merged back in by the Gateway from PaymentService.
     public string? PaymentStatus { get; set; }
     public string? PaymentMessage { get; set; }
@@ -35,8 +43,10 @@ public class InvoicePayload
     /// was never consulted, same as AiSuggestedCategory above.</summary>
     public List<string>? AiPolicyRulesCited { get; set; }
 
-    // Structured fact the submitter provides directly (no OCR per the assignment) — always
-    // takes precedence over anything the AI might otherwise guess from free-text Notes.
+    // TripId: still a structured, submitter-typed fact (never inferred from free-text
+    // Notes). LineItems: on main, submitter-typed; on this dev branch, populated by OCR
+    // from ReceiptImageDataUri instead (see docs/adr/008-receipt-photo-submission.md) -
+    // either way, PolicyEngine's GLOBAL-MATH/MEAL-03 checks consume this list identically.
     public string? TripId { get; set; }
     public List<LineItem>? LineItems { get; set; }
 
@@ -48,14 +58,18 @@ public class InvoicePayload
     public string? BusinessJustification { get; set; }
     public string? ClientName { get; set; }
 
-    // GLOBAL-FX (docs/policy.md): the submitter states the original currency directly (no
-    // OCR, no live FX lookup). Null/"USD" means TotalAmount is already domestic; any other
-    // value marks TotalAmount as an already-converted FX amount subject to GLOBAL-FX.
+    // GLOBAL-FX (docs/policy.md): no live FX lookup - on main, the submitter states the
+    // original currency directly; on this dev branch, OCR may also detect a non-$ symbol
+    // on the receipt (see docs/adr/008-receipt-photo-submission.md). Null/"USD" means
+    // TotalAmount is already domestic; any other value marks TotalAmount as an
+    // already-converted FX amount subject to GLOBAL-FX.
     public string? Currency { get; set; }
 
-    // TRAVEL-03: first/business-class travel is always human, regardless of amount — an
-    // explicit flag rather than parsing free text, consistent with every other structured
-    // fact on this payload.
+    // TRAVEL-03: first/business-class travel is always human, regardless of amount. On
+    // main, submitter-typed. On this dev branch, also populated by OCR from
+    // ReceiptImageDataUri when the ticket itself says "first class"/"business class" (see
+    // docs/adr/008-receipt-photo-submission.md) — unlike TripId below, this IS a fact
+    // printed on the receipt, so it belongs in OCR the same way LineItems does.
     public bool IsPremiumTravel { get; set; }
 
     // Idempotency discriminator for invoice.submitted deliveries (Dapr pub/sub is

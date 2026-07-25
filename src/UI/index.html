@@ -65,48 +65,21 @@
 
             <div class="card">
                 <h2>Submit New Invoice</h2>
+                <p class="hint">Vendor, amount, line items, and currency all come from the receipt photo itself (local OCR) — there's no way to type them, on purpose (see docs/adr/008). Attach a clear photo of the receipt below.</p>
 
                 <form id="invoiceForm">
                     <input type="hidden" id="trackingId" />
-                    <label>Vendor</label>
-                    <input id="vendor" list="knownVendors" placeholder="e.g., CloudSoft Inc" required />
-                    <datalist id="knownVendors"></datalist>
-                    <p class="hint">Picking a vendor the router already knows gets a much more confident classification — see the list below.</p>
-                    <label>Invoice Number <span class="optional">(optional)</span></label>
-                    <input id="invoiceNumber" placeholder="e.g., INV-4471" />
-                    <p class="hint">Not required for duplicate protection — that's automatic either way (same submission retried, or the same vendor/amount/category/notes repeated within a minute). This field only adds an extra check when you do have a real invoice number to reference.</p>
-                    <label>Total Amount (already converted to USD)</label>
-                    <input id="totalAmount" type="number" step="0.01" placeholder="0.00" required />
-                    <label>Original currency <span class="optional">(leave blank/USD for domestic spend)</span></label>
-                    <input id="currency" placeholder="e.g., EUR, GBP — blank means USD" />
-                    <p class="hint">Foreign-currency items over $1,000 are always human-reviewed (GLOBAL-FX).</p>
+                    <label>Receipt photo</label>
+                    <input id="receiptImage" type="file" accept="image/*" required />
+                    <p class="hint">If the photo can't be read confidently, you'll be asked to retake it before anything else happens — no AI or human review is spent on an illegible photo.</p>
+                    <img id="receiptPreview" style="display:none; max-width:100%; margin-top:8px; border-radius:6px;" />
 
-                    <div id="mealsField" class="conditional-field">
-                        <label><input type="checkbox" id="isClientEntertainment" />This is client entertainment</label>
-                        <p class="hint">Personal meals auto-approve up to $75. Client entertainment has its own $800 ceiling, but over $500 needs a business justification and client name below (MEAL-02).</p>
-                        <div id="clientEntertainmentFields" style="display:none; margin-top:8px;">
-                            <label>Business justification</label>
-                            <input id="businessJustification" placeholder="e.g., Contract renewal dinner" />
-                            <label>Client name</label>
-                            <input id="clientName" placeholder="e.g., Northwind Corp" />
-                        </div>
-                    </div>
-
-                    <div id="travelField" class="conditional-field">
-                        <label>Trip ID</label>
-                        <input id="tripId" placeholder="e.g., TRIP-42" />
-                        <p class="hint">Travel expenses accumulate against this Trip ID's $2,000 cap.</p>
-                        <label style="margin-top:10px;"><input type="checkbox" id="isPremiumTravel" />First/business class</label>
-                        <p class="hint">Always requires manager approval, regardless of amount (TRAVEL-03).</p>
-                    </div>
-
-                    <label>Notes</label>
+                    <label>Notes <span class="optional">(optional)</span></label>
                     <textarea id="description" rows="2"></textarea>
 
-                    <label>Itemized breakdown <span id="lineItemsRequired" class="required-tag" style="display:none;">(required over $25)</span></label>
-                    <div id="lineItemsContainer"></div>
-                    <button type="button" id="addLineItemBtn" class="btn-add-line">+ Add line item</button>
-                    <p id="lineItemsHint" class="line-items-hint">No line items yet.</p>
+                    <label>Trip ID <span class="optional">(optional — only relevant for travel expenses)</span></label>
+                    <input id="tripId" placeholder="e.g., TRIP-42" />
+                    <p class="hint">Not on the receipt, so OCR can't read it — which trip this belongs to is business context only you know. First/business-class itself IS detected from the ticket automatically.</p>
 
                     <button type="submit" class="btn-submit">Submit Invoice</button>
                 </form>
@@ -115,7 +88,7 @@
 
             <div class="card">
                 <h2>Known Vendors</h2>
-                <p class="hint">The router recognizes these by name with high confidence. Anything else is classified by keywords in the vendor/notes text instead — and if nothing matches, it defaults to a low-confidence "Other" that escalates rather than guesses.</p>
+                <p class="hint">The router recognizes these by name with high confidence. Anything else is classified by keywords in the OCR'd vendor/notes text instead — and if nothing matches, it defaults to a low-confidence "Other" that escalates rather than guesses.</p>
                 <button id="refreshVendorsBtn" class="btn-secondary">Refresh</button>
                 <div id="vendorsList"></div>
             </div>
@@ -157,6 +130,11 @@
                 <label>Itemized breakdown <span class="optional">(receipt / math mismatch)</span></label>
                 <div id="infoLineItemsContainer"></div>
                 <button type="button" id="infoAddLineItemBtn" class="btn-add-line">+ Add line item</button>
+
+                <label>Retake receipt photo <span class="optional">(only if asked to retake — GLOBAL-RECEIPT-UNREADABLE)</span></label>
+                <input id="infoReceiptImage" type="file" accept="image/*" />
+                <p class="hint">Attaching a new photo here re-runs OCR from scratch; it does not change the vendor or amount directly.</p>
+
                 <button id="provideInfoBtn" class="btn-submit" style="margin-top:15px;">Submit Additional Info</button>
                 <h4>Result</h4>
                 <pre id="provideInfoResult">—</pre>
