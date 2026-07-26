@@ -77,11 +77,23 @@ public class GroqVisionFraudDetector : IReceiptFraudDetector
     private static string BuildRequestBody(string receiptImageDataUri)
     {
         const string systemPrompt = """
-            You are only judging whether this photo looks like a genuine photographed or
-            scanned paper receipt, versus one that is fabricated, screenshotted-and-edited,
-            AI-generated, or a stock photo. Look for tells like inconsistent lighting/shadows,
-            editing artifacts, a screen's pixel grid or glare, mismatched fonts within the
-            same receipt, or a layout that doesn't resemble a real point-of-sale printout.
+            You are judging whether this image shows a genuine invoice/receipt reflecting
+            a real transaction, versus one that has been fabricated or tampered with to
+            deceive an approval system.
+
+            A legitimate receipt is not only a photographed or scanned piece of paper -
+            it can equally be a born-digital e-invoice, a PDF, or a screenshot exported
+            directly from a real point-of-sale or invoicing system (e.g. an emailed
+            receipt, a digital invoicing platform's export). Looking clean, sharp, or
+            digitally rendered is NOT itself a sign of fraud - do not flag an image as
+            Suspicious merely because it looks digital rather than photographed.
+
+            Instead, look for actual signs of tampering or fabrication: inconsistent fonts
+            or formatting within the same document, visible editing artifacts (copy-paste
+            seams, misaligned text, mismatched resolution regions), numbers or line items
+            that don't fit the document's own layout, a screenshot of unrelated content
+            dressed up to look like a receipt, or a photo of a chat/AI conversation rather
+            than an actual invoice.
 
             Do not attempt to read or extract any amounts, vendor names, dates, or line
             items from this photo - that is handled by a separate step. Your only output is

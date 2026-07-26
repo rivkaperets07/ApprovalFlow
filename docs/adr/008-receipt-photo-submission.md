@@ -43,11 +43,15 @@ can't lie" claim only holds if there is no way around it.
   the exact fields `main` already has: `Vendor`, `TotalAmount`, and, as an
   extension, `LineItems` and `Currency` when the receipt shows them clearly.
 - **`IReceiptFraudDetector`** (`src/DecisionEngine/Ai/`) — a narrow AI call
-  that does exactly one thing: judge whether the photo looks like a genuine
-  photographed receipt or a fabricated one. It never extracts a field and
-  never touches `Vendor`/`TotalAmount`/anything else — that separation was
-  the project owner's explicit framing, kept literally in the code, not
-  just in prose.
+  that does exactly one thing: judge whether the image reflects a genuine
+  transaction or has been fabricated/tampered with. It never extracts a
+  field and never touches `Vendor`/`TotalAmount`/anything else — that
+  separation was the project owner's explicit framing, kept literally in
+  the code, not just in prose. "Genuine" deliberately covers more than a
+  photographed paper receipt: a born-digital e-invoice/PDF/exported
+  screenshot from a real system is just as legitimate, and the prompt is
+  written to judge tampering, not digital-vs-photographed (see the July 26
+  revision below — an earlier version of this prompt conflated the two).
 
 Both are registered via the same config-driven DI switch pattern as
 `AiProvider` (`OcrExtractor`, `ReceiptFraudDetector` — independent of each
@@ -160,6 +164,29 @@ exactly as it already was on `main`.
   built in: an unconfident vendor/amount read fails closed to `NeedsInfo`
   rather than guessing, and an unread `LineItems`/`Currency` simply stays
   `null` rather than fabricating a value.
+- **Fixed (2026-07-26): the fraud check used to conflate "digital" with
+  "fake."** The original `IReceiptFraudDetector` prompt asked whether the
+  photo looked like a genuine photographed/scanned paper receipt, versus
+  fabricated or AI-generated. That framing assumed every legitimate expense
+  started life on paper — but a real, born-digital e-invoice (e.g. an
+  Israeli Tranzila-issued חשבונית מס, never printed or photographed at all)
+  is legitimate precisely *because* it's digital-native, and scored
+  Suspicious under the old prompt for a reason that had nothing to do with
+  fraud. Confirmed live against a real such invoice before the fix.
+  `GeminiVisionFraudDetector`/`GroqVisionFraudDetector`'s prompts now ask
+  two separate questions instead of one: is this a legitimate document
+  (photographed paper *or* a born-digital e-invoice/PDF/exported
+  screenshot are equally legitimate), and does it show actual signs of
+  tampering (inconsistent fonts, editing artifacts, mismatched layout) —
+  looking clean and digitally rendered is explicitly called out as *not*
+  itself a fraud signal.
+- **OCR assumes Latin script and a `$` sign.** `TesseractReceiptOcrExtractor`
+  only has the English trained data installed, and `AmountPattern` matches
+  `$` specifically — confirmed live that a real Hebrew, ₪-denominated
+  invoice fails OCR entirely (falls to `NeedsInfo`), not because the photo
+  is unclear, but because the language/currency are outside what this
+  increment was built for. Real fix would add `tesseract-ocr-heb` and a
+  currency-symbol table beyond `$`.
 - **Base64-in-`InvoicePayload` bloats every Redis record, pub/sub delivery,
   and outbox transaction** with the full receipt photo. Acceptable at demo
   scale; a real production system would use a dedicated blob store and

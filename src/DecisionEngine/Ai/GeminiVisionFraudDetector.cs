@@ -17,7 +17,10 @@ namespace DecisionEngine.Ai;
 /// </summary>
 public class GeminiVisionFraudDetector : IReceiptFraudDetector
 {
-    private const string Model = "gemini-2.5-flash";
+    // See GeminiAiModelProvider's Model comment - the "-latest" alias, not a dated model
+    // id (that 404s on this key), for the much higher free-tier rate limit, since this
+    // call and that one both fire per submission.
+    private const string Model = "gemini-flash-lite-latest";
     private const string EndpointTemplate = "https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}";
     private const string SecretStoreName = "secretstore";
     private const string ApiKeySecretName = "GEMINI_API_KEY";
@@ -42,12 +45,11 @@ public class GeminiVisionFraudDetector : IReceiptFraudDetector
         var apiKey = await GetApiKeyAsync(cancellationToken);
 
         var endpoint = string.Format(EndpointTemplate, Model, apiKey);
-        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(BuildRequestBody(match.Groups["mime"].Value, match.Groups["data"].Value), Encoding.UTF8, "application/json")
-        };
+        var requestBody = BuildRequestBody(match.Groups["mime"].Value, match.Groups["data"].Value);
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = new StringContent(requestBody, Encoding.UTF8, "application/json") },
+            cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -55,6 +57,20 @@ public class GeminiVisionFraudDetector : IReceiptFraudDetector
 
         return JsonSerializer.Deserialize<ReceiptFraudCheckResult>(content, JsonOptions)
             ?? throw new InvalidOperationException("Could not parse Gemini's fraud-check response.");
+    }
+
+    // See GeminiAiModelProvider's SendWithRetryAsync comment - same one-retry-after-a-pause
+    // handling for the free tier's transient 429/503, since this call fires per submission too.
+    private async Task<HttpResponseMessage> SendWithRetryAsync(Func<HttpRequestMessage> requestFactory, CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.SendAsync(requestFactory(), cancellationToken);
+        var isRateLimited = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || (int)response.StatusCode == 503;
+        if (!isRateLimited)
+            return response;
+
+        response.Dispose();
+        await Task.Delay(TimeSpan.FromSeconds(7), cancellationToken);
+        return await _httpClient.SendAsync(requestFactory(), cancellationToken);
     }
 
     private async Task<string> GetApiKeyAsync(CancellationToken cancellationToken)
@@ -77,11 +93,23 @@ public class GeminiVisionFraudDetector : IReceiptFraudDetector
     private static string BuildRequestBody(string mimeType, string base64Data)
     {
         const string systemPrompt = """
-            You are only judging whether this photo looks like a genuine photographed or
-            scanned paper receipt, versus one that is fabricated, screenshotted-and-edited,
-            AI-generated, or a stock photo. Look for tells like inconsistent lighting/shadows,
-            editing artifacts, a screen's pixel grid or glare, mismatched fonts within the
-            same receipt, or a layout that doesn't resemble a real point-of-sale printout.
+            You are judging whether this image shows a genuine invoice/receipt reflecting
+            a real transaction, versus one that has been fabricated or tampered with to
+            deceive an approval system.
+
+            A legitimate receipt is not only a photographed or scanned piece of paper -
+            it can equally be a born-digital e-invoice, a PDF, or a screenshot exported
+            directly from a real point-of-sale or invoicing system (e.g. an emailed
+            receipt, a digital invoicing platform's export). Looking clean, sharp, or
+            digitally rendered is NOT itself a sign of fraud - do not flag an image as
+            Suspicious merely because it looks digital rather than photographed.
+
+            Instead, look for actual signs of tampering or fabrication: inconsistent fonts
+            or formatting within the same document, visible editing artifacts (copy-paste
+            seams, misaligned text, mismatched resolution regions), numbers or line items
+            that don't fit the document's own layout, a screenshot of unrelated content
+            dressed up to look like a receipt, or a photo of a chat/AI conversation rather
+            than an actual invoice.
 
             Do not attempt to read or extract any amounts, vendor names, dates, or line
             items from this photo - that is handled by a separate step. Your only output is

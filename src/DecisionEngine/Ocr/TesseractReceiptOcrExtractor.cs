@@ -25,7 +25,18 @@ public class TesseractReceiptOcrExtractor : IReceiptOcrExtractor
 {
     private static readonly Regex DataUriPattern = new(@"^data:image/(?<ext>\w+);base64,(?<data>.+)$", RegexOptions.Compiled | RegexOptions.Singleline);
     private static readonly Regex AmountPattern = new(@"\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{2})?)", RegexOptions.Compiled);
-    private static readonly Regex LineItemPattern = new(@"^(?<description>[A-Za-z][A-Za-z0-9 '&/\-]{2,40}?)\s{2,}\$?\s?(?<amount>\d{1,6}(?:\.\d{2})?)\s*$", RegexOptions.Compiled);
+    // Two leading groups absorb OCR noise before the description ever starts, both optional:
+    // a stray quote/apostrophe-like glyph (Tesseract intermittently transcribes one at the
+    // very start of a line - a rendering/antialiasing artifact, not tied to any real
+    // character on the receipt), then a quantity prefix ("1 Coffee", "2x Lunch" - real POS
+    // receipts print quantity before the description far more often than not). Without
+    // these the description's own ^[A-Za-z] anchor rejected the line outright, silently
+    // dropping it from the itemized breakdown even though the receipt has one.
+    // Description cap raised 40 -> 80: a real invoice/receipt line item description regularly
+    // runs longer than 40 characters (e.g. "Cloud software subscription - Enterprise tier" is
+    // 47) - the tighter cap silently rejected the whole line, indistinguishable from there
+    // being no line item at all.
+    private static readonly Regex LineItemPattern = new(@"^(?:['""`‘’]\s*)?(?:\d+\s*[xX]?\s+)?(?<description>[A-Za-z][A-Za-z0-9 '&/\-]{2,80}?)\s{2,}\$?\s?(?<amount>\d{1,6}(?:\.\d{2})?)\s*$", RegexOptions.Compiled);
     private static readonly (string Symbol, string Code)[] CurrencySymbols = [("€", "EUR"), ("£", "GBP"), ("¥", "JPY")];
     private static readonly string[] PremiumTravelKeywords = ["first class", "business class", "premium cabin", "premium economy"];
 

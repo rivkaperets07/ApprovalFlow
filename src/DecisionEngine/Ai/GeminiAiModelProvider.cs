@@ -17,7 +17,14 @@ namespace DecisionEngine.Ai;
 /// </summary>
 public class GeminiAiModelProvider : IAiModelProvider
 {
-    private const string Model = "gemini-2.5-flash";
+    // "gemini-flash-lite-latest" (Google's rolling alias for its current flash-lite model),
+    // not a dated "gemini-2.5-flash-lite" id - live-tested against this key and that
+    // specific dated model 404s ("no longer available to new users"; Google still lists
+    // it under ListModels, but generateContent rejects it - the alias is what actually
+    // resolves). flash-lite over flash: same family, higher free-tier rate limit, and this
+    // call plus GeminiVisionFraudDetector's both firing per submission made the plain
+    // "flash" ceiling easy to hit during a live demo.
+    private const string Model = "gemini-flash-lite-latest";
     private const string EndpointTemplate = "https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}";
     private const string SecretStoreName = "secretstore";
     private const string ApiKeySecretName = "GEMINI_API_KEY";
@@ -43,12 +50,11 @@ public class GeminiAiModelProvider : IAiModelProvider
         var citedClauses = _policyRetriever.Retrieve(PolicyRetriever.BuildQuery(invoice, category), topK: 3);
 
         var endpoint = string.Format(EndpointTemplate, Model, apiKey);
-        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(BuildRequestBody(invoice, category, citedClauses), Encoding.UTF8, "application/json")
-        };
+        var requestBody = BuildRequestBody(invoice, category, citedClauses);
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = new StringContent(requestBody, Encoding.UTF8, "application/json") },
+            cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -83,6 +89,24 @@ public class GeminiAiModelProvider : IAiModelProvider
 
         _cachedApiKey = apiKey;
         return apiKey;
+    }
+
+    // One retry, after a pause long enough to plausibly cross into the API's next
+    // per-minute rate-limit window - not a general resilience mechanism, specifically
+    // aimed at the 429/503 "you're over the free-tier RPM limit right now" case, which is
+    // transient by definition (the same call made a few seconds later succeeds). Anything
+    // else (4xx client errors, a second 429/503) is returned as-is for EnsureSuccessStatusCode
+    // to throw on, still failing closed to Escalated exactly as before this existed.
+    private async Task<HttpResponseMessage> SendWithRetryAsync(Func<HttpRequestMessage> requestFactory, CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.SendAsync(requestFactory(), cancellationToken);
+        var isRateLimited = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || (int)response.StatusCode == 503;
+        if (!isRateLimited)
+            return response;
+
+        response.Dispose();
+        await Task.Delay(TimeSpan.FromSeconds(7), cancellationToken);
+        return await _httpClient.SendAsync(requestFactory(), cancellationToken);
     }
 
     private static string BuildRequestBody(InvoicePayload invoice, string category, IReadOnlyList<PolicyClause> citedClauses)
