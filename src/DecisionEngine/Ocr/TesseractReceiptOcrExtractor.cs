@@ -24,7 +24,14 @@ namespace DecisionEngine.Ocr;
 public class TesseractReceiptOcrExtractor : IReceiptOcrExtractor
 {
     private static readonly Regex DataUriPattern = new(@"^data:image/(?<ext>\w+);base64,(?<data>.+)$", RegexOptions.Compiled | RegexOptions.Singleline);
-    private static readonly Regex AmountPattern = new(@"\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{2})?)", RegexOptions.Compiled);
+    private static readonly Regex DollarAmountPattern = new(@"\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{2})?)", RegexOptions.Compiled);
+    // Fallback for real receipts that print a raw number with no "$" at all - common on
+    // plain US POS printouts (confirmed live against several real photos tonight: a
+    // vendor/total pair this clearly readable to a human still failed OCR outright
+    // because neither line ever had a literal "$"). Requires an exact two-decimal-place
+    // number specifically - distinctive enough not to be confused with a table number,
+    // order id, or quantity that happens to sit on the same line as a "total" keyword.
+    private static readonly Regex PlainAmountPattern = new(@"(?<!\d)(\d{1,6}(?:,\d{3})*\.\d{2})(?!\d)", RegexOptions.Compiled);
     // Two leading groups absorb OCR noise before the description ever starts, both optional:
     // a stray quote/apostrophe-like glyph (Tesseract intermittently transcribes one at the
     // very start of a line - a rendering/antialiasing artifact, not tied to any real
@@ -36,7 +43,11 @@ public class TesseractReceiptOcrExtractor : IReceiptOcrExtractor
     // runs longer than 40 characters (e.g. "Cloud software subscription - Enterprise tier" is
     // 47) - the tighter cap silently rejected the whole line, indistinguishable from there
     // being no line item at all.
-    private static readonly Regex LineItemPattern = new(@"^(?:['""`‘’]\s*)?(?:\d+\s*[xX]?\s+)?(?<description>[A-Za-z][A-Za-z0-9 '&/\-]{2,80}?)\s{2,}\$?\s?(?<amount>\d{1,6}(?:\.\d{2})?)\s*$", RegexOptions.Compiled);
+    // Comma added to the description charset: modifiers like "House Wine, glass" or
+    // "Whiskey Neat, double" are common on real menus/receipts, and without it the comma
+    // itself broke the match, silently dropping the whole line the same way the 40-char
+    // cap and quote artifact did.
+    private static readonly Regex LineItemPattern = new(@"^(?:['""`‘’]\s*)?(?:\d+\s*[xX]?\s+)?(?<description>[A-Za-z][A-Za-z0-9 ',&/\-]{2,80}?)\s{2,}\$?\s?(?<amount>\d{1,6}(?:\.\d{2})?)\s*$", RegexOptions.Compiled);
     private static readonly (string Symbol, string Code)[] CurrencySymbols = [("€", "EUR"), ("£", "GBP"), ("¥", "JPY")];
     private static readonly string[] PremiumTravelKeywords = ["first class", "business class", "premium cabin", "premium economy"];
 
@@ -93,9 +104,9 @@ public class TesseractReceiptOcrExtractor : IReceiptOcrExtractor
 
         var vendor = lines[0];
 
-        var totalLine = lines.FirstOrDefault(l => l.Contains("total", StringComparison.OrdinalIgnoreCase) && AmountPattern.IsMatch(l));
-        var amountSource = totalLine ?? lines.OrderByDescending(l => AmountPattern.Matches(l).Select(m => ParseAmount(m.Groups[1].Value)).DefaultIfEmpty(0m).Max()).FirstOrDefault();
-        var amountMatch = amountSource is not null ? AmountPattern.Match(amountSource) : Match.Empty;
+        var totalLine = lines.FirstOrDefault(l => l.Contains("total", StringComparison.OrdinalIgnoreCase) && (DollarAmountPattern.IsMatch(l) || PlainAmountPattern.IsMatch(l)));
+        var amountSource = totalLine ?? lines.OrderByDescending(l => AllAmountsIn(l).DefaultIfEmpty(0m).Max()).FirstOrDefault();
+        var amountMatch = amountSource is not null ? BestAmountMatch(amountSource) : Match.Empty;
 
         if (string.IsNullOrWhiteSpace(vendor) || !amountMatch.Success)
         {
@@ -126,6 +137,21 @@ public class TesseractReceiptOcrExtractor : IReceiptOcrExtractor
             LineItems = lineItems.Count > 0 ? lineItems : null,
             IsPremiumTravel = isPremiumTravel
         };
+    }
+
+    // Dollar-prefixed amounts are the more confident signal, so they win whenever a line
+    // has both (never expected in practice, but keeps the preference explicit rather than
+    // relying on match order).
+    private static Match BestAmountMatch(string line)
+    {
+        var dollar = DollarAmountPattern.Match(line);
+        return dollar.Success ? dollar : PlainAmountPattern.Match(line);
+    }
+
+    private static IEnumerable<decimal> AllAmountsIn(string line)
+    {
+        foreach (Match m in DollarAmountPattern.Matches(line)) yield return ParseAmount(m.Groups[1].Value);
+        foreach (Match m in PlainAmountPattern.Matches(line)) yield return ParseAmount(m.Groups[1].Value);
     }
 
     private static decimal ParseAmount(string raw) =>

@@ -13,14 +13,14 @@
     "Delta Airlines": "Travel",
     "Marriott Hotels": "Travel",
     "City Cab Co": "Travel",
+    "SkyLink Airways": "Travel",
+    "Cascade Ridge Inn": "Travel",
     "Acme Supplies": "OfficeSupplies",
     "Office Depot": "OfficeSupplies",
     "Staples": "OfficeSupplies",
     "AdBoost Media": "Marketing",
     "Meta Ads": "Marketing",
     "Google Ads": "Marketing",
-    "GREEN FIELD": "Meals",
-    "Dona Mercedes Restaurant": "Meals",
-    "Chef Wang": "Meals"
+    "Dona Mercedes Restaurant": "Meals"
   }
 }

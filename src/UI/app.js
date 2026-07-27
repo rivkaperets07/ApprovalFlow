@@ -391,22 +391,24 @@ async function loadEscalations() {
     }
     const rows = data.map(item => `
         <tr>
-            <td>${item.trackingId}</td>
+            <td><span class="tracking-id" title="Click to copy: ${item.trackingId}" onclick="navigator.clipboard.writeText('${item.trackingId}'); this.textContent='copied!'; setTimeout(() => this.textContent='${item.trackingId.slice(0, 8)}…', 800);">${item.trackingId.slice(0, 8)}…</span></td>
             <td>${item.vendor}</td>
             <td>${item.aiSuggestedCategory ?? '<span class="empty">n/a</span>'}${item.aiConfidence ? ` (${item.aiConfidence})` : ''}</td>
             <td>${item.aiPolicyRulesCited && item.aiPolicyRulesCited.length > 0 ? item.aiPolicyRulesCited.join(', ') : '<span class="empty">—</span>'}</td>
             <td>${item.totalAmount}</td>
-            <td>${item.reason}</td>
+            <td class="col-reason" title="Click to expand/collapse" onclick="this.classList.toggle('expanded')">${item.reason}</td>
             <td>${item.receiptImageDataUri
                 ? `<img src="${item.receiptImageDataUri}" style="max-width:80px; max-height:80px; border-radius:4px; cursor:zoom-in;" title="${item.receiptVerificationVerdict ?? ''} (confidence ${item.receiptVerificationConfidence ?? '—'})" onclick="window.open(this.src)" onerror="this.outerHTML='<span class=&quot;empty&quot;>${item.receiptVerificationVerdict ?? 'not a real image'}</span>'" />`
                 : '<span class="empty">—</span>'}</td>
         </tr>
     `).join('');
     list.innerHTML = `
+        <div class="table-scroll">
         <table>
             <thead><tr><th>Tracking ID</th><th>Vendor</th><th>AI Category (confidence)</th><th>Policy Rules Cited</th><th>Amount</th><th>Reason</th><th>Receipt</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
+        </div>
     `;
 }
 document.getElementById('refreshEscalationsBtn').addEventListener('click', loadEscalations);

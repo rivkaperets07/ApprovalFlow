@@ -164,10 +164,26 @@ pre {
 .badge-Failed { background: var(--danger); }
 
 table { width: 100%; border-collapse: collapse; margin-top: var(--space-3); font-size: 0.88rem; }
-th { text-align: left; padding: 7px 10px; color: var(--text-muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--border); }
-td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { text-align: left; padding: 7px 10px; color: var(--text-muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--border); white-space: nowrap; }
+td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 tbody tr:hover { background: #f8f9fc; }
 .empty { color: var(--text-faint); font-style: italic; }
+
+/* Escalation queue: full tracking ids and long reason text used to force every
+   row onto 4-6 wrapped lines inside the narrow dashboard card. Truncating the id
+   (full value on hover/click-to-copy, see app.js) and letting the table scroll
+   horizontally instead of wrapping keeps each row to one line while presenting -
+   the underlying data is still fully reachable, just not force-wrapped. */
+.table-scroll { overflow-x: auto; }
+.tracking-id { font-family: 'SF Mono', Consolas, monospace; cursor: pointer; padding: 2px 4px; border-radius: 3px; }
+.tracking-id:hover { background: var(--info-bg); }
+
+/* Reason starts collapsed to one line (ellipsis) so the row stays compact while
+   presenting; clicking it toggles .expanded, which lets it wrap downward within
+   the same cell instead of overflowing sideways - the row grows only when asked. */
+td.col-reason { max-width: 260px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+td.col-reason:hover { background: var(--info-bg); }
+td.col-reason.expanded { white-space: normal; max-width: 360px; overflow: visible; text-overflow: clip; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
 .stat-box { background: var(--info-bg); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); }
